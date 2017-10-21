@@ -107,6 +107,7 @@ mdt$m.payrate2<- as.numeric(mdt$m.payrate2)
 mdt[, m.payrate.Mean := rowMeans(.SD), by = uniq_id, .SDcols = c("m.payrate1", "m.payrate2")]
 ```
 
+The mean value and median value of the payrate should almost be equivalent given that in this case, they are both determined from the listed upper and lower window of payrate. 
 
 ```{r}
 # Checking if the values in experience1 are always lower than experience2, 
@@ -121,7 +122,7 @@ mdt[m.payrate1>m.payrate2,list(payrate,payrate.M,m.payrate1,m.payrate2)]
 
 In both of these cases, the payrate is not well formated and extracted. There is probably some bad extraction in the extracting of payrate that is not depicted here as well as they may be hidden behind m.payrate2 > m.payrate1.
 
-Removing these cases (where m.payrate1>m.payrate2) by setting them to NA
+Removing these cases (where m.payrate1>m.payrate2) by setting them to NA.
 
 
 ```{r}
@@ -146,6 +147,7 @@ mdt[m.payrate.Mean>9e+6] %>%
 In fact, it almost seems like the posting of payrate = "Pay Band: PB3 (Rs.15600-39100) with Academic Grade Pay of Rs.8,000/p. m." are just reposting seeing about 80 listing of jobs are having identifical payrate.
 
 ```{r}
+# for an easy way out, it seems just removing all extracted payrate data for these badly extracted payrate will do. ie:
 mdt[m.payrate.Mean>9e+6,`:=`(payrate.M= NA,
                              m.payrate1= NA,
                              m.payrate2= NA,
@@ -157,6 +159,8 @@ N_valid_payrate<-sum(!is.na(mdt$m.payrate.Mean))
 
 payrate_record_percentage <- sum(!is.na(mdt$m.payrate.Mean))/sum((mdt$m.payrate.Mean), na.rm=T)
 ```
+
+
 
 Sadly, there is only `payrate_record_percentage` of the job listing that has its payrate listed and extracted so fr, that would be a mere `N_valid_payrate` records.
 
@@ -170,7 +174,9 @@ mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<9e+6] %>%
   melt(.,  measure.vars = patterns("^m.payrate")) %>%
   ggvis(~value, fill = ~variable) %>%
   group_by(variable) %>%
-  layer_densities()  
+  layer_densities() %>%
+  add_axis("x", title = "Payrate Per Annum") %>%
+  add_axis("y", title = "Density")
 
 
 
@@ -178,6 +184,21 @@ mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<9e+6] %>%
 
 ```
 
+Would be interesting to see the how the payrate woudl vary per industry/skill/location in a later section. Though, if we narrow down our windowing.
+
+
+```{r}
+mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<2e+6] %>%
+  melt(.,  measure.vars = patterns("^m.payrate")) %>%
+  ggvis(~value, fill = ~variable) %>%
+  group_by(variable) %>%
+  layer_densities() %>%
+  add_axis("x", title = "Payrate Per Annum") %>%
+  add_axis("y", title = "Density")
+
+```
+
+Well it seems that for the payrate of the listed jobs, the median of listed salary is just about ~300k repee PA ( since the jobboard seems to be based in india).
 
 ## skills
 
@@ -223,8 +244,6 @@ It seems most job listing are determined to be in a cross of several industry
 # splitting the mdt$industry with "/" into industryS1, industryS2 etc
 splits <- max(lengths(strsplit(mdt$industry, "/")))
 mdt <- mdt[,paste0("industryS", 1:splits) := tstrsplit(industry, "/", fixed=TRUE)][]
-
-melt(mdt,  measure.vars = patterns("^industryS"))
 ```
 
 ### Most Popular industry
@@ -339,16 +358,20 @@ max(mdt$postdate_time, na.rm =T)
 ### Number of job posting over time
 
 ```{r}
-# mdt[, .N, by=month(postdate_time)] 
 
+
+#
 mdt[, timeCut := cut(as.POSIXct(postdate_time), breaks="1 month")]
-head(mdt$timeCut)
+
 mdt[!is.na(timeCut), .N, by=timeCut] %>%
   ggvis(~timeCut, ~N)%>%
   layer_bars(fillOpacity := 0.1) %>%
   add_axis("x", properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
   ))
+
+# alternative data table method
+# mdt[, .N, by=month(postdate_time)] 
 
 # alternate dplyr solution
 # mdt$uniq_id
@@ -358,13 +381,12 @@ mdt[!is.na(timeCut), .N, by=timeCut] %>%
 
 ```
 
-Given that the postdate where probably the date where the job listing is posted, and that it is not shown whether the data is fully subsetted over time,
-
-If we assume that this captured all the job listing over 2016 to 2017 (probably unlikely given the huge variance over the period and that there are months where there is little to no listing), it would seems that most jobs are posted in March in 2016 ( Start of year-ish), followed by Nov 2015 (End of year).
+If we assume that this captured all the job listing over 2016 to 2017 (probably unlikely given the huge variance over the period and that there are months where there is little to no listing), it would seems that most jobs are posted in March in 2016 ( Start of year-ish), followed by Nov 2015 (End of year). I wonder if this coincide with the timing of graduation/bonus etc.
 
 
 ## Location
 
+Finally we are at location, I have to admit the reason I went ahead with ggvis is predominaly because of their map package.
 ```{r}
 # some job listing are listed at multiple location
 # "Delhi NCR, Mumbai, Bengaluru, Kochi, Greater Noida, Gurgaon, Hyderabad, Kozhikode, Lucknow"
@@ -393,6 +415,15 @@ dt.location <- mdt[,paste0("location", 1:splits) ][, ID := NULL]
 
 
 ## Job description
+
+
+Example output of jobsdescription
+
+```{r}
+head(mdt$jobdescription, 2)
+```
+
+It seems this is not very well formmatet. Some of the useful information such as payrate and indsutry is also already extracted into individual column by pre-crawler. Still, it would be interesting to see if we can indentify additional useful information for job description.
 
 ```{r}
 require(tm)
