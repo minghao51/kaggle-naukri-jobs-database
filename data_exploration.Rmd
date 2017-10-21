@@ -178,37 +178,65 @@ mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<9e+6] %>%
 
 ```{r}
 #head of records in skill
-head(inputdt$skills)
+head(mdt$skills)
 
 # unique(inputdt$skills)
-
-
-
 ```
 listing of top 10 skill in demand
 
 ```{r}
 
-inputdt[,.N,by=list(skills)] %>%
+mdt[!is.na(skills),.N,by=list(skills)] %>%
   .[,.SD[order(-N)]] %>%
   .[, head(.SD, 10),]%>%
   ggvis(x=~skills, y=~N) %>%
-  layer_bars()%>%
+  layer_bars(fillOpacity := 0.1)%>%
   add_axis("x", properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
   ))
 ```
 
+This shows that the most demanding skills are IT Software - Application Programming, followed by Sales and ITES.
+
 ## industry
 ```{r}
 
 # Checking whether every val  id entry has "yrs" in the records, 
-summary(str_detect(mdt$experience, "yrs"))  
+# summary(!is.na(mdt$industry))
+#    Mode   FALSE    TRUE    NA's 
+# logical       5   21995       0 
+# Majority of the job listing did listed valid industry
 
+head(mdt$industry)
+
+
+```
+It seems most job listing are determined to be in a cross of several industry
+
+```{r}
+# splitting the mdt$industry with "/" into industryS1, industryS2 etc
 splits <- max(lengths(strsplit(mdt$industry, "/")))
 mdt <- mdt[,paste0("industryS", 1:splits) := tstrsplit(industry, "/", fixed=TRUE)][]
 
 melt(mdt,  measure.vars = patterns("^industryS"))
+```
+
+```{r}
+# note that this  would also duplicate job listing with multiple industry for certain records, since some of the job listing are listed to have multiple industry 
+mdt.melt.industry<-melt(mdt,  measure.vars = patterns("^industryS")) 
+
+mdt.melt.industry$value<-as.factor(trimws(mdt.melt.industry$value))
+
+mdt.melt.industry$value %>%
+  .[,.SD[order(-N)]] %>%
+  .[, head(.SD, 10),]%>%
+  ggvis(x=~skills, y=~N) %>%
+  layer_bars(fillOpacity := 0.1)%>%
+  add_axis("x", properties = axis_props(
+    labels = list(angle = 45, align = "left", fontSize = 10)
+  ))
+
+
 ```
 
 ## Experience
