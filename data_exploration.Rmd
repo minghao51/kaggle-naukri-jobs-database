@@ -1,6 +1,8 @@
 ---
-title: "R Notebook"
-output: html_notebook
+title: "kaggle-naukri-jobdb"
+author: "minghao"
+date: "October 21, 2017"
+output: html_document
 ---
 
 
@@ -10,11 +12,12 @@ require(data.table)
 require(lubridate)
 require(stringr)
 require(ggvis)
+
 require(ggplot2)
 ```
 
 ```{r}
-setwd(dir="D:\\Users\\gdrtmh\\Desktop\\Kaggle\\Jobs on Naukri")
+# setwd(dir="D:\\Users\\gdrtmh\\Desktop\\Kaggle\\Jobs on Naukri")
 inputdt <- as.data.table(read.csv(file="naukri_com-job_sample.csv", strip.white = TRUE, 
                              na.strings=c("","NA","Not Mentioned","Not Disclosed by Recruiter"), 
                              stringsAsFactors = FALSE))
@@ -75,6 +78,8 @@ inputdt$payrate.M<-gsub("[^0-9-]", "", inputdt$payrate.M)
 inputdt[lengths(strsplit(inputdt$payrate.M, "-"))>2, list(payrate,payrate.M),]
 ```
 
+COuld potentially improve the regular expresssion by extracting only numbers between the dashes, but that would require more work with regeexp, going to put it off for now.
+
 Splitting the payrate column while conditionally ignoring those that have more than dash ("-") symbol.
 
 ```{r}
@@ -98,7 +103,7 @@ mdt[, m.payrate.Mean := rowMeans(.SD), by = uniq_id, .SDcols = c("m.payrate1", "
 ```{r}
 # Checking if the values in experience1 are always lower than experience2, 
 # such that experience1 can be considered as a lower limit for the job, vice versa for experience2
-summary(mdt$m.payrate1>mdt$m.payrate2)
+# summary(mdt$m.payrate1>mdt$m.payrate2)
 #    Mode   FALSE    TRUE    NA's 
 # logical       2    4743   17255 
 
@@ -130,6 +135,8 @@ mdt[m.payrate.Mean>9e+6] %>%
 
 ```
 
+In fact, it almost seems like the posting of payrate = "Pay Band: PB3 (Rs.15600-39100) with Academic Grade Pay of Rs.8,000/p. m." are just reposting seeing about 80 listing of jobs are having identifical payrate.
+
 ```{r}
 mdt[m.payrate.Mean>9e+6,`:=`(payrate.M= NA,
                              m.payrate1= NA,
@@ -138,10 +145,12 @@ mdt[m.payrate.Mean>9e+6,`:=`(payrate.M= NA,
 
 
 #total count of valid payrate records
-sum(!is.na(mdt$m.payrate.Mean))
+N_valid_payrate<-sum(!is.na(mdt$m.payrate.Mean))
+
+payrate_record_percentage <- sum(!is.na(mdt$m.payrate.Mean))/sum((mdt$m.payrate.Mean), na.rm=T)
 ```
 
-
+Sadly, there is only `payrate_record_percentage` of the job listing that has its payrate listed and extracted so fr, that would be a mere `N_valid_payrate` records.
 
 ```{r}
 # all_values <- function(x) {
@@ -251,6 +260,10 @@ mdt$postdate_timezone <- NULL
 ```{r}
 mdt$postdate_time <- parse_date_time(mdt$postdate_time, "%Y-%m-%d H:M:S")
 #ignoring timezone for now, shouldn't make any difference too
+
+
+min(mdt$postdate_time, na.rm =T)
+max(mdt$postdate_time, na.rm =T)
 ```
 
 ## Location
