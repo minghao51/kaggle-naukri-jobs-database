@@ -386,32 +386,51 @@ If we assume that this captured all the job listing over 2016 to 2017 (probably 
 
 ## Location
 
-Finally we are at location, I have to admit the reason I went ahead with ggvis is predominaly because of their map package.
+Finally we are at location, I have to admit that the reason I went ahead with ggvis is predominaly because of their map package.
+
+
 ```{r}
-# some job listing are listed at multiple location
-# "Delhi NCR, Mumbai, Bengaluru, Kochi, Greater Noida, Gurgaon, Hyderabad, Kozhikode, Lucknow"
-
-splits <- max(lengths(strsplit(mdt$joblocation_address, ",")))
-
-# checking 
-# mdt[lengths(strsplit(mdt$joblocation_address, ","))==splits]
-
-mdt <- mdt[,paste0("locationS", 1:splits) := tstrsplit(joblocation_address, ",", fixed=TRUE)] 
-  
-  
-dt.location <-  melt(mdt,  measure.vars = patterns("^locationS"))
-
-
-dt.location <- mdt[,paste0("location", 1:splits) ][, ID := NULL]
-# 
-# # Sort term_frequency in descending order
-# term_frequency<- sort(mdt$location,decreasing = T)
-# 
-# # Plot a barchart of the 10 most common words
-# barplot(term_frequency[1:10], col = "tan", las = 2)
-
+head(mdt$joblocation_address)
 
 ```
+
+Some job listing are listed at multiple location, such as 
+"Delhi NCR, Mumbai, Bengaluru, Kochi, Greater Noida, Gurgaon, Hyderabad, Kozhikode, Lucknow". Hence, will have to use a strsplit with mutiple arguement for ",", "/", and " ".
+
+
+### Most Popular Location
+```{r}
+# splitting by ",", "/", and " "
+splits <- max(lengths(strsplit(mdt$joblocation_address, ",|\\/|\\,| ")))
+mdt <- mdt[,paste0("locationS", 1:splits) := tstrsplit(joblocation_address, ",|\\/|\\,| ")] 
+  
+# this will also allow job with multiple location listing to be listed to different location (duplicates)
+mdt.melt.location <-  melt(mdt,  measure.vars = patterns("^locationS"))
+
+# Setting  empty strings to NA
+mdt.melt.location[value==""] <- NA
+
+# Trimming white shape fromt he value
+mdt.melt.location$value <- (trimws(mdt.melt.location$value))
+
+#plotting most popular location for job listing
+mdt.melt.location  %>%
+  .[!is.na(value),.N,by=list(value)]%>%
+  .[,.SD[order(-N)]] %>%
+  .[, head(.SD, 10),]%>%
+  .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
+  ggvis(x=~value, y=~N) %>% 
+  layer_bars(fillOpacity := 0.1)%>%
+  add_axis("x", title = "location",properties = axis_props(
+    labels = list(angle = 45, align = "left", fontSize = 10)
+  )) %>%
+  add_axis("y", title = "Number of posting")
+
+```
+
+Note that this is not extensive, sinec the job listings could have a slightly varaible in the name and it would be registered as a valid count. Ie, location such as "India-Karnataka-Bangalore"are listed as seperated instance with  "Bangalore". 
+
+Regardless, it seems Bengaluru, Bangolore and Mumbai are among the most popular job location.
 
 
 ## Job description
@@ -423,7 +442,7 @@ Example output of jobsdescription
 head(mdt$jobdescription, 2)
 ```
 
-It seems this is not very well formmatet. Some of the useful information such as payrate and indsutry is also already extracted into individual column by pre-crawler. Still, it would be interesting to see if we can indentify additional useful information for job description.
+It seems this is not very well formated. Some of the useful information such as payrate and indsutry is also already extracted into individual column by pre-crawler. Still, it would be interesting to see if we can indentify additional useful information for job description.
 
 ```{r}
 require(tm)
