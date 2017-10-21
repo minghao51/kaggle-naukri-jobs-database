@@ -21,6 +21,7 @@ require(stringr)
 require(ggvis)
 
 require(ggplot2)
+require(forcats)
 ```
 
 ```{r}
@@ -171,6 +172,10 @@ mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<9e+6] %>%
   group_by(variable) %>%
   layer_densities()  
 
+
+
+# Oddly I couldn't find documented (and not dirty) approach in inserting a plot title with ggvis. I will just leave it as it is for now.
+
 ```
 
 
@@ -189,6 +194,7 @@ listing of top 10 skill in demand
 mdt[!is.na(skills),.N,by=list(skills)] %>%
   .[,.SD[order(-N)]] %>%
   .[, head(.SD, 10),]%>%
+  .[,value:=fct_inorder(factor(skills))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
   ggvis(x=~skills, y=~N) %>%
   layer_bars(fillOpacity := 0.1)%>%
   add_axis("x", properties = axis_props(
@@ -221,24 +227,46 @@ mdt <- mdt[,paste0("industryS", 1:splits) := tstrsplit(industry, "/", fixed=TRUE
 melt(mdt,  measure.vars = patterns("^industryS"))
 ```
 
+### Most Popular industry
+
 ```{r}
 # note that this  would also duplicate job listing with multiple industry for certain records, since some of the job listing are listed to have multiple industry 
-mdt.melt.industry<-melt(mdt,  measure.vars = patterns("^industryS")) 
+mdt.melt.industry <- melt(mdt,  measure.vars = patterns("^industryS")) 
 
-mdt.melt.industry$value<-as.factor(trimws(mdt.melt.industry$value))
+mdt.melt.industry$value <- (trimws(mdt.melt.industry$value))
 
-mdt.melt.industry$value %>%
+mdt.melt.industry  %>%
+  .[!is.na(value),.N,by=list(value)]%>%
   .[,.SD[order(-N)]] %>%
   .[, head(.SD, 10),]%>%
-  ggvis(x=~skills, y=~N) %>%
+  .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
+  ggvis(x=~value, y=~N) %>% 
   layer_bars(fillOpacity := 0.1)%>%
-  add_axis("x", properties = axis_props(
+  add_axis("x", title = "Industry",properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
-  ))
+  )) %>%
+  add_axis("y", title = "Number of posting")
+
 
 
 ```
 
+###Least popular Industry
+
+```{r}
+
+mdt.melt.industry[!is.na(value),.N,by=list(value)]  %>%
+  .[,.SD[order(-N)]] %>%
+  .[, tail(.SD, 10),]%>%
+  .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
+  ggvis(x=~as.factor(value), y=~N) %>%
+  layer_bars(fillOpacity := 0.1)%>%
+  add_axis("x", title = "Industry") %>%
+  add_axis("y", title = "Number of posting")
+
+
+
+```
 ## Experience
 
 ```{r}
@@ -274,12 +302,15 @@ mdt[!is.na(m.experience.L),]%>%
   melt(.,  measure.vars = patterns("^m.experience")) %>%
   ggvis(~value, fill = ~variable) %>%
   group_by(variable) %>%
-  layer_densities(adjust = 2)  
+  layer_densities(adjust = 2) %>%  #adjust parameter to smooth the wiggliness of density
+  add_axis("x", title = "Number of years") %>%
+  add_axis("y", title = "Density")
 
 ```
 
 ## Date Time
 
+split and time zone
 ```{r}
 head(mdt$postdate)
 
@@ -291,34 +322,35 @@ mdt[, c("postdate_time","postdate_timezone") := tstrsplit(postdate,"+",2)]
 # 21977    23 
 # it seems timezone is pretty meaningless in the data base too
 
+# Removing timezone column
 mdt$postdate_timezone <- NULL
 ```
 
-### Changing the datetime into appropriate format
+formatting
 
 ```{r}
 mdt$postdate_time <- parse_date_time(mdt$postdate_time, "%Y-%m-%d H:M:S")
 #ignoring timezone for now, shouldn't make any difference too
 
-
 min(mdt$postdate_time, na.rm =T)
 max(mdt$postdate_time, na.rm =T)
 ```
 
-
+### Number of job posting over time
 
 ```{r}
 # mdt[, .N, by=month(postdate_time)] 
 
 mdt[, timeCut := cut(as.POSIXct(postdate_time), breaks="1 month")]
+head(mdt$timeCut)
 mdt[!is.na(timeCut), .N, by=timeCut] %>%
   ggvis(~timeCut, ~N)%>%
+  layer_bars(fillOpacity := 0.1) %>%
   add_axis("x", properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
   ))
 
-
-# # dplyr solution
+# alternate dplyr solution
 # mdt$uniq_id
 # mdt %>% 
 #   group_by(yr = year(postdate_time), mon = month(postdate_time)) %>% 
