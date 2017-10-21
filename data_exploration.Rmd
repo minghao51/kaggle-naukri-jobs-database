@@ -5,7 +5,14 @@ date: "October 21, 2017"
 output: html_document
 ---
 
+# Intro
 
+The dataset is given on the context that this is a pre-crawled dataset, taken as subset of a bigger dataset that was created by extracting data from Naukri.com, a leading job board.
+
+sadly it is not known how the data were subseted, whether analysising this data would give a breif overview with regards to job market over a period of time or certain industry. 
+
+
+# libraries
 ```{r}
 require(tidyverse)
 require(data.table)
@@ -170,10 +177,17 @@ mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<9e+6] %>%
 ## skills
 
 ```{r}
+#head of records in skill
 head(inputdt$skills)
 
-unique(inputdt$skills)
+# unique(inputdt$skills)
 
+
+
+```
+listing of top 10 skill in demand
+
+```{r}
 
 inputdt[,.N,by=list(skills)] %>%
   .[,.SD[order(-N)]] %>%
@@ -183,9 +197,6 @@ inputdt[,.N,by=list(skills)] %>%
   add_axis("x", properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
   ))
-
-
-
 ```
 
 ## industry
@@ -266,6 +277,32 @@ min(mdt$postdate_time, na.rm =T)
 max(mdt$postdate_time, na.rm =T)
 ```
 
+
+
+```{r}
+# mdt[, .N, by=month(postdate_time)] 
+
+mdt[, timeCut := cut(as.POSIXct(postdate_time), breaks="1 month")]
+mdt[!is.na(timeCut), .N, by=timeCut] %>%
+  ggvis(~timeCut, ~N)%>%
+  add_axis("x", properties = axis_props(
+    labels = list(angle = 45, align = "left", fontSize = 10)
+  ))
+
+
+# # dplyr solution
+# mdt$uniq_id
+# mdt %>% 
+#   group_by(yr = year(postdate_time), mon = month(postdate_time)) %>% 
+#   summarise(mn_amt = length(uniq_id))
+
+```
+
+Given that the postdate where probably the date where the job listing is posted, and that it is not shown whether the data is fully subsetted over time,
+
+If we assume that this captured all the job listing over 2016 to 2017 (probably unlikely given the huge variance over the period and that there are months where there is little to no listing), it would seems that most jobs are posted in March in 2016 ( Start of year-ish), followed by Nov 2015 (End of year).
+
+
 ## Location
 
 ```{r}
@@ -277,10 +314,10 @@ splits <- max(lengths(strsplit(mdt$joblocation_address, ",")))
 # checking 
 # mdt[lengths(strsplit(mdt$joblocation_address, ","))==splits]
 
-mdt <- mdt[,paste0("locationS", 1:splits) := tstrsplit(joblocation_address, ",", fixed=TRUE)] %>%
+mdt <- mdt[,paste0("locationS", 1:splits) := tstrsplit(joblocation_address, ",", fixed=TRUE)] 
   
   
-  melt(mdt,  measure.vars = patterns("^locationS"))
+dt.location <-  melt(mdt,  measure.vars = patterns("^locationS"))
 
 
 dt.location <- mdt[,paste0("location", 1:splits) ][, ID := NULL]
