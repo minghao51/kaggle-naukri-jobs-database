@@ -19,9 +19,10 @@ require(data.table)
 require(lubridate)
 require(stringr)
 require(ggvis)
-
 require(ggplot2)
 require(forcats)
+require(ggmap)
+require(highcharter)
 ```
 
 ```{r}
@@ -400,6 +401,9 @@ Some job listing are listed at multiple location, such as
 
 ### Most Popular Location
 ```{r}
+# Removing str in parenthesis as the information is redundant for our purpose of data exploration
+mdt$joblocation_address <- gsub("\\(.*\\)","", mdt$joblocation_address)
+
 # splitting by ",", "/", and " "
 splits <- max(lengths(strsplit(mdt$joblocation_address, ",|\\/|\\,| ")))
 mdt <- mdt[,paste0("locationS", 1:splits) := tstrsplit(joblocation_address, ",|\\/|\\,| ")] 
@@ -432,6 +436,72 @@ Note that this is not extensive, sinec the job listings could have a slightly va
 
 Regardless, it seems Bengaluru, Bangolore and Mumbai are among the most popular job location.
 
+
+```{r}
+
+mdt.melt.location.t100<-mdt.melt.location  %>%
+  .[!is.na(value),.N,by=list(value)]%>%
+  .[,.SD[order(-N)]] %>%
+  .[, head(.SD, 100),]
+
+# using geocodes ( part of ggmap package) to find the lat and lon for the top 100 location
+# perhaps not the cleanest way, some of the location will not be the most accurate.
+geocodes <- geocode(as.character(mdt.melt.location.t100$value))
+mydat <- data.frame(mdt.melt.location.t100[,1:2],geocodes)
+
+# The locations that have absurd lon and lat are to be removed
+ mydat.filtered <- setDT(mydat)[lon>60&lon<80] %>%
+   .[lat>10&lat<30] 
+   
+   
+india =  c(lon =78.96, lat = 20.59)
+india.map = get_map(location = india, zoom = 5)
+ggmap(india.map, extent = "panel", maprange=FALSE)+
+   geom_density2d(data = mydat.filtered, aes(x = lon, y = lat)) +
+   # stat_density2d(data = mydat, aes(x = lon, y = lat, fill = N, alpha = N),
+                # size = 0.01, bins = 16, geom = 'polygon') +
+   scale_fill_gradient(low = "green", high = "red") +
+   scale_alpha(range = c(0.00, 0.25), guide = FALSE) +
+   theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))
+
+
+```
+
+attemp using highchater
+
+```{r}
+
+# mapdata <- get_data_from_map(download_map_data("countries/in/in-all"))
+# glimpse(mapdata)
+# 
+#  # mdt.melt.location.t100<- 
+#  mdt.melt.location.t100<- mdt.melt.location  %>%
+#    .[!is.na(value),list(.N), by=list(value)]%>%
+#    .[,z:=N]%>%
+#    .[,.SD[order(-N)]] %>%
+#    .[, head(.SD, 100),]
+#  mdt.melt.location.t100$color<- colorize(mdt.melt.location.t100$N)
+
+is.data.table(mydat.filtered)
+ 
+ # Setting z,color and name parameter for plotting with highcharter 
+ highcharter.plot <- setDT(mydat)[lon>60&lon<80] %>%
+   .[lat>10&lat<30]%>%
+   .[,`:=`(
+           name=value,
+           z=N,
+           color= colorize(N)
+           )] 
+ 
+# plotting with highcharter
+hcmap("countries/in/in-all", name = "India") %>% 
+  hc_add_series(data = highcharter.plot, type = "mapbubble",
+                name = "Job listing", maxSize = "25") %>% 
+  hc_title(text = "Locations of Job Posting") %>% 
+  hc_subtitle(text = "only top 100 locations are included, the counts also include duplicates if the job is listed at multiple location") %>%
+  hc_mapNavigation(enabled = TRUE) 
+
+```
 
 ## Job description
 
@@ -476,7 +546,8 @@ term_frequency<-row_sums(clean_VC.tdm)
 # Sort term_frequency in descending order
 term_frequency<- sort(term_frequency,decreasing = T)
 
-# Plot a barchart of the 10 most common words
+# Plot a barchart of the 10 most common wordsm;'
+
 barplot(term_frequency[1:10], col = "tan", las = 2)
 
 # Create word_freqs
@@ -555,7 +626,7 @@ wordcloud(word_freqs$term, word_freqs$num, max.words = 100,
 ```{r}
 inaugdfm <- dfm(mdt$jobdescription, remove = stopwords("english"), 
                 stem = TRUE, groups=mdt$industry1, ngrams = 2)
-inaugdfm <- dfm(mdt$jobdescription)
+# inaugdfm <- dfm(mdt$jobdescription)
                 
                 
 tdm_trim<-t(dfm_trim(inaugdfm, max_docfreq = .8))
@@ -582,11 +653,25 @@ data(data_corpus_inaugural)
 data.frame(inaugSpeech = texts(mdt$jobdescription), docvars(as.factor(mdt$industry1)))
             
             
-myCorpus <- corpus_subset(data.frame(mdt$jobdescription,)
+myCorpus <- corpus_subset(data.frame(mdt$jobdescription)
 
 
 myStemMat <- dfm(myCorpus, remove = stopwords("english"), stem = TRUE, remove_punct = TRUE)
 myStemMat[, 1:5]
 
 ```
+
+
+```{r}
+# install.packages("leaflet")
+# library(leaflet)
+# 
+# leaflet() %>% addTiles() %>% 
+#     setView(lng = 78, lat = 10.5, zoom = 6)
+
+
+
+```
+
+
 
