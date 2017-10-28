@@ -2,7 +2,12 @@
 title: "kaggle-naukri-jobdb"
 author: "minghao"
 date: "October 21, 2017"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    df_print: tibble
 ---
 
 # Intro
@@ -13,7 +18,7 @@ sadly it is not known how the data were subseted, whether analysising this data 
 
 
 # libraries
-```{r}
+```{r, warning = FALSE, message=FALSE}
 require(tidyverse)
 require(data.table)
 require(lubridate)
@@ -23,6 +28,8 @@ require(ggplot2)
 require(forcats)
 require(ggmap)
 require(highcharter)
+require(broom)
+require(plotly)
 ```
 
 ```{r}
@@ -36,13 +43,15 @@ inputdt <- as.data.table(read.csv(file="naukri_com-job_sample.csv", strip.white 
 
 ```
 
-# Data Exploration
+# Data Exploration & Basic Analysis
+This section seems to clean and organise the input data, while also investigate its basic quality/distribution.
 
 ```{r}
 glimpse(inputdt)
 ```
 
 ## site_name
+
 ```{r}
 summary(as.factor(inputdt$site_name))
 inputdt$site_name <- NULL
@@ -57,7 +66,7 @@ uniqueN(inputdt$uniq_id)
 
 This Would be useful as an unique identifier for individual job listing.
 
-## jobid
+## Jobid
 
 ```{r}
 uniqueN(inputdt, by=c("jobid"))
@@ -92,7 +101,6 @@ COuld potentially improve the regular expresssion by extracting only numbers bet
 Splitting the payrate column while conditionally ignoring those that have more than dash ("-") symbol.
 
 ```{r}
-
 # Identifying the appropriate number of splits for payrate with str "-"
 splits <- max(lengths(strsplit(inputdt$payrate.M, "-")))
 
@@ -104,7 +112,11 @@ mdt <- inputdt[lengths(strsplit(inputdt$payrate.M, "-"))<=2,
 mdt$m.payrate1<- as.numeric(mdt$m.payrate1)
 mdt$m.payrate2<- as.numeric(mdt$m.payrate2)
 
+# account for case where there is only one listed payrate instead of a range
+mdt<-mdt[is.na(m.payrate2), m.payrate2:=m.payrate1]
+
 # Creating a column that indicate the mean of the payrate, would be easier on plotting etc
+# na.rm = T to enable those listing that only depicted single number of payrate to have a mean
 mdt[, m.payrate.Mean := rowMeans(.SD), by = uniq_id, .SDcols = c("m.payrate1", "m.payrate2")]
 ```
 
@@ -201,7 +213,62 @@ mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<2e+6] %>%
 
 Well it seems that for the payrate of the listed jobs, the median of listed salary is just about ~300k repee PA ( since the jobboard seems to be based in india).
 
-## skills
+## Education
+
+```{r}
+head(mdt$education,5)
+```
+
+It can be seen ( after skimming through multiple lines)that Education can be split into different field quite accurately with delimiter of  "UG:", "PG:" and "Doctorate:". Also, in some case, the education field can be listed, yet are noted as "Not Required"
+
+
+```{r}
+
+mdt %>%
+  .[grep("Diploma",education),m.Education.tf.Diploma := TRUE] %>% #Diploma
+  .[,m.Education.UG :=trimws(str_extract(education, "(?<=UG: ).*(?=PG:)|(?<=UG: ).*$"))] %>%
+  .[grep("Not Required",m.Education.UG),m.Education.UG :=NA] %>% #Removing "not required"
+  .[!is.na(m.Education.UG),m.Education.tf.UG:=TRUE] %>%
+  .[,m.Education.PG :=trimws(str_extract(education, "(?<=PG:).*(?=Doctorate:)|(?<=PG:).*$"))] %>%
+  .[grep("MBA",m.Education.PG),m.Education.tf.MBA := TRUE] %>% #MBA
+  .[grep("Not Required",m.Education.PG),m.Education.PG :=NA] %>%
+  .[!is.na(m.Education.PG),m.Education.tf.PG:=TRUE] %>%
+  .[,m.Education.DR :=trimws(str_extract(education, "(?<=Doctorate:).*$"))] %>%
+  .[grep("Not Required",m.Education.DR),m.Education.DR :=NA] %>%
+  .[!is.na(m.Education.DR),m.Education.tf.DR:=TRUE]
+
+```
+
+Note that I also created some "m.Education.tf.x" (where x= UG, Diploma, PG, MBA, DR ) to indicate the need for designated education level in True or NA.
+
+In some case, such as
+
+```{r}
+mdt[(33:35)]$m.Education.UG
+```
+
+Additional split on "," will allow more details to be extracted, but I will left this alone for now. Going further would probably require diving deep into NLP or pulling a dictionary (to account for shortforms and synonyms).
+
+### Number of job listing for a particular level of Education
+
+```{r}
+mdt %>%
+  .[,lapply(.SD, sum, na.rm=TRUE) ,.SDcols= (names(mdt) %like% "^m.Education.tf*")]
+```
+
+
+```{r}
+mdt %>%
+  .[grep("Diploma",education),m.Education.factor := "Diploma"] %>% 
+  .[!is.na(m.Education.UG),m.Education.factor := "UG"] %>%
+  .[grep("MBA",education),m.Education.factor := "MBA"] %>%
+  .[!is.na(m.Education.PG),m.Education.factor := "PG"] %>%
+  .[!is.na(m.Education.DR),m.Education.factor := "DR"]
+  
+mdt$m.Education.factor <- factor(mdt$m.Education.factor)
+```
+
+## Skills
 
 ```{r}
 #head of records in skill
@@ -209,16 +276,16 @@ head(mdt$skills)
 
 # unique(inputdt$skills)
 ```
+
 listing of top 10 skill in demand
 
 ```{r}
-
 mdt[!is.na(skills),.N,by=list(skills)] %>%
   .[,.SD[order(-N)]] %>%
-  .[, head(.SD, 10),]%>%
+  .[, head(.SD, 10),] %>%
   .[,value:=fct_inorder(factor(skills))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
   ggvis(x=~skills, y=~N) %>%
-  layer_bars(fillOpacity := 0.1)%>%
+  layer_bars(fillOpacity := 0.1) %>%
   add_axis("x", properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
   ))
@@ -226,7 +293,13 @@ mdt[!is.na(skills),.N,by=list(skills)] %>%
 
 This shows that the most demanding skills are IT Software - Application Programming, followed by Sales and ITES.
 
-## industry
+
+
+```{r}
+ mdt$skills <- as.factor(mdt$skills)
+```
+
+## Industry
 ```{r}
 
 # Checking whether every val  id entry has "yrs" in the records, 
@@ -237,31 +310,57 @@ This shows that the most demanding skills are IT Software - Application Programm
 
 head(mdt$industry)
 
-
+# since there is limited number of combination of industry, this column should be set as a factor
+mdt$industry <- as.factor(mdt$industry)
 ```
-It seems most job listing are determined to be in a cross of several industry
+It seems most job listing are well arranged, it is almost listed in tree like structure that.
 
 ```{r}
-# splitting the mdt$industry with "/" into industryS1, industryS2 etc
-splits <- max(lengths(strsplit(mdt$industry, "/")))
-mdt <- mdt[,paste0("industryS", 1:splits) := tstrsplit(industry, "/", fixed=TRUE)][]
+# # splitting the mdt$industry with "/" into industryS1, industryS2 etc
+# splits <- max(lengths(strsplit(mdt$industry, "/")))
+# mdt <- mdt[,paste0("industryS", 1:splits) := tstrsplit(industry, " / ", fixed=TRUE)][]
+# 
+# 
+# mdt[, industry_combined := paste(sort(.SD), collapse = " / "), by = 1:nrow(mdt),
+#    .SDcols = names(mdt) %like% "^industryS"]
+# head(mdt$industry_combined)
+# 
+# mdt[, .N, by= industry_combined] %>%
+#   .[,.SD[order(-N)]]
+
+mdt[, .N, by= industry] %>%
+  .[,.SD[order(-N)]]
+
+
+
 ```
 
 ### Most Popular industry
 
 ```{r}
-# note that this  would also duplicate job listing with multiple industry for certain records, since some of the job listing are listed to have multiple industry 
-mdt.melt.industry <- melt(mdt,  measure.vars = patterns("^industryS")) 
+## note that this  would also duplicate job listing with multiple industry for certain records, since some of the job listing are listed to have multiple industry 
+# mdt.melt.industry <- melt(mdt,  measure.vars = patterns("^industryS")) 
+# 
+# mdt.melt.industry$value <- trimws(mdt.melt.industry$value)
+# 
+# mdt.melt.industry  %>%
+#   .[!is.na(value),.N,by=list(value)]%>%
+#   .[,.SD[order(-N)]] %>%
+#   .[, head(.SD, 10),] %>%
+#   .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
+#   ggvis(x=~value, y=~N) %>% 
+#   layer_bars(fillOpacity := 0.1)%>%
+#   add_axis("x", title = "Industry",properties = axis_props(
+#     labels = list(angle = 45, align = "left", fontSize = 10)
+#   )) %>%
+#   add_axis("y", title = "Number of posting")
 
-mdt.melt.industry$value <- (trimws(mdt.melt.industry$value))
-
-mdt.melt.industry  %>%
-  .[!is.na(value),.N,by=list(value)]%>%
+mdt[, .N, by= industry] %>%
   .[,.SD[order(-N)]] %>%
-  .[, head(.SD, 10),]%>%
-  .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
-  ggvis(x=~value, y=~N) %>% 
-  layer_bars(fillOpacity := 0.1)%>%
+  .[, head(.SD, 10),] %>%
+  .[,industry:=fct_inorder(factor(industry))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
+  ggvis(x=~industry, y=~N) %>% 
+  layer_bars(fillOpacity := 0.1) %>%
   add_axis("x", title = "Industry",properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
   )) %>%
@@ -274,19 +373,32 @@ mdt.melt.industry  %>%
 ###Least popular Industry
 
 ```{r}
+# mdt.melt.industry[!is.na(value),.N,by=list(value)]  %>%
+#   .[,.SD[order(-N)]] %>%
+#   .[, tail(.SD, 10),]%>%
+#   .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
+#   ggvis(x=~as.factor(value), y=~N) %>%
+#   layer_bars(fillOpacity := 0.1)%>%
+#   add_axis("x", title = "Industry") %>%
+#   add_axis("y", title = "Number of posting")
 
-mdt.melt.industry[!is.na(value),.N,by=list(value)]  %>%
+
+mdt[, .N, by= industry] %>%
   .[,.SD[order(-N)]] %>%
-  .[, tail(.SD, 10),]%>%
-  .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
-  ggvis(x=~as.factor(value), y=~N) %>%
-  layer_bars(fillOpacity := 0.1)%>%
-  add_axis("x", title = "Industry") %>%
+  .[!is.na(industry), tail(.SD, 10),] %>%
+  .[,industry:=fct_inorder(factor(industry))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
+  ggvis(x=~industry, y=~N) %>% 
+  layer_bars(fillOpacity := 0.1) %>%
+  add_axis("x", title = "Industry",properties = axis_props(
+    labels = list(angle = 45, align = "left", fontSize = 10)
+  )) %>%
   add_axis("y", title = "Number of posting")
 
 
-
 ```
+
+
+
 ## Experience
 
 ```{r}
@@ -308,6 +420,10 @@ mdt <- mdt[,paste0("experience", 1:splits) := tstrsplit(experience.M, "-", fixed
 mdt$experience1<-as.numeric(mdt$experience1)
 mdt$experience2<-as.numeric(mdt$experience2)
 
+# Create a columm for median of experience
+mdt[, m.experience.Median:=median(c(experience1, experience2)), by = uniq_id]
+
+
 # Checking if the values in experience1 are always lower than experience2, 
 # such that experience1 can be considered as a lower limit for the job, vice versa for experience2
 # summary(mdt$experience1<=mdt$experience2)
@@ -327,6 +443,28 @@ mdt[!is.na(m.experience.L),]%>%
   add_axis("y", title = "Density")
 
 ```
+
+
+
+## Number of positions
+```{r}
+class(mdt$numberofpositions)
+summary(mdt$numberofpositions)
+```
+Intestingly, there are job listing that have 2000 positions, a quick look at this outlier.
+
+```{r}
+mdt[numberofpositions==2000]
+```
+
+The majority of the job listing doesn't list a number of the number of positions, I think it is reasonable to assump those without listed number in 'Number of position' as 1. This may not be entirely accurate but it will manipulation with other data in later section.
+
+```{r}
+mdt<-mdt[is.na(numberofpositions), numberofpositions:=1]
+summary(mdt$numberofpositions)
+```
+
+Now all recorded number of positions have a valid number.
 
 ## Date Time
 
@@ -365,7 +503,7 @@ max(mdt$postdate_time, na.rm =T)
 mdt[, timeCut := cut(as.POSIXct(postdate_time), breaks="1 month")]
 
 mdt[!is.na(timeCut), .N, by=timeCut] %>%
-  ggvis(~timeCut, ~N)%>%
+  ggvis(~timeCut, ~N) %>%
   layer_bars(fillOpacity := 0.1) %>%
   add_axis("x", properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
@@ -391,40 +529,44 @@ Finally we are at location, I have to admit that the reason I went ahead with gg
 
 
 ```{r}
-head(mdt$joblocation_address)
+head(mdt$joblocation_address,5)
 
 ```
 
 Some job listing are listed at multiple location, such as 
-"Delhi NCR, Mumbai, Bengaluru, Kochi, Greater Noida, Gurgaon, Hyderabad, Kozhikode, Lucknow". Hence, will have to use a strsplit with mutiple arguement for ",", "/", and " ".
+"Delhi NCR, Mumbai, Bengaluru, Kochi, Greater Noida, Gurgaon, Hyderabad, Kozhikode, Lucknow". Hence,  a strsplit with arguements for ",", "/", should do the job.
 
 
 ### Most Popular Location
+
 ```{r}
-# Removing str in parenthesis as the information is redundant for our purpose of data exploration
+# Removing str in parenthesis as this information is redundant for our purpose of data exploration
 mdt$joblocation_address <- gsub("\\(.*\\)","", mdt$joblocation_address)
 
 # splitting by ",", "/", and " "
-splits <- max(lengths(strsplit(mdt$joblocation_address, ",|\\/|\\,| ")))
-mdt <- mdt[,paste0("locationS", 1:splits) := tstrsplit(joblocation_address, ",|\\/|\\,| ")] 
+splits <- max(lengths(strsplit(mdt$joblocation_address, ", |/")))
+mdt <- mdt[,paste0("locationS", 1:splits) := tstrsplit(joblocation_address, ", |/")] 
+mdt$joblocation_address<- NULL # removing the original data
+# some joblocations appears to use space, " " as delimiter... 
+# Obviously, implentating strsplit on " " would introduce additional issues (ie location name with space. Thankfully this phenomena is rathe rare, I would just ignore " " as a delimiter for now.
   
-# this will also allow job with multiple location listing to be listed to different location (duplicates)
+# this will also allow job with multiple location listing to be listed to different location (duplicates), for example 
 mdt.melt.location <-  melt(mdt,  measure.vars = patterns("^locationS"))
 
 # Setting  empty strings to NA
 mdt.melt.location[value==""] <- NA
 
-# Trimming white shape fromt he value
+# Trimming white space from the value
 mdt.melt.location$value <- (trimws(mdt.melt.location$value))
 
-#plotting most popular location for job listing
+# plotting most popular location for job listing
 mdt.melt.location  %>%
-  .[!is.na(value),.N,by=list(value)]%>%
+  .[!is.na(value),.N,by=list(value)] %>%
   .[,.SD[order(-N)]] %>%
-  .[, head(.SD, 10),]%>%
+  .[, head(.SD, 10),] %>%
   .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
   ggvis(x=~value, y=~N) %>% 
-  layer_bars(fillOpacity := 0.1)%>%
+  layer_bars(fillOpacity := 0.1) %>%
   add_axis("x", title = "location",properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
   )) %>%
@@ -438,55 +580,90 @@ Regardless, it seems Bengaluru, Bangolore and Mumbai are among the most popular 
 
 
 ```{r}
-
-mdt.melt.location.t100<-mdt.melt.location  %>%
-  .[!is.na(value),.N,by=list(value)]%>%
+# tally the count of location with top 100 locations, 
+# which incidently also only inlcudes location with more than ~10 counts of job listings.
+mdt.melt.location.count.t100<-mdt.melt.location  %>%
+  .[!is.na(value),.N,by=list(value)] %>%
   .[,.SD[order(-N)]] %>%
   .[, head(.SD, 100),]
 
-# using geocodes ( part of ggmap package) to find the lat and lon for the top 100 location
-# perhaps not the cleanest way, some of the location will not be the most accurate.
-geocodes <- geocode(as.character(mdt.melt.location.t100$value))
-mydat <- data.frame(mdt.melt.location.t100[,1:2],geocodes)
 
-# The locations that have absurd lon and lat are to be removed
- mydat.filtered <- setDT(mydat)[lon>60&lon<80] %>%
-   .[lat>10&lat<30] 
+# making a list of file in current working directory
+filelist <- list.files()
+
+# mydat exist, read it , otherwise, geocodes to find lat lon for the locations
+if(any(filelist=="mydat.rds")){
+  mydat <- readRDS("mydat.rds")
+}else {
+  # using geocodes ( part of ggmap package) to find the lat and lon for the top 100 location
+  # perhaps not the cleanest way, some of the location will not be the most accurate.
+  geocodes <- geocode(as.character(mdt.melt.location.count.t100$value))
+  mydat <- data.frame(mdt.melt.location.count.t100[,1:2],geocodes)
+  saveRDS(mydat, "mydat.rds")}
+
+
+
+mydat <- readRDS("mydat.rds")
+
+# # The locations that have absurd lon and lat are to be removed
+#  mydat.filtered <- setDT(mydat)[lon>60&lon<90] %>%
+#    .[lat>5&lat<40] 
    
-   
+# India longitudes and latitude from google 
 india =  c(lon =78.96, lat = 20.59)
-india.map = get_map(location = india, zoom = 5)
-ggmap(india.map, extent = "panel", maprange=FALSE)+
-   geom_density2d(data = mydat.filtered, aes(x = lon, y = lat)) +
-   # stat_density2d(data = mydat, aes(x = lon, y = lat, fill = N, alpha = N),
-                # size = 0.01, bins = 16, geom = 'polygon') +
-   scale_fill_gradient(low = "green", high = "red") +
-   scale_alpha(range = c(0.00, 0.25), guide = FALSE) +
-   theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))
+
+# # loading the mapdata
+# india.map = get_map(location = india, zoom = 5)
+# 
+# # plotting with ggmap countour plot
+# ggmap(india.map, extent = "panel", maprange=FALSE)+
+#    geom_density2d(data = mydat.filtered, aes(x = lon, y = lat)) +
+#    scale_fill_gradient(low = "green", high = "red") +
+#    scale_alpha(range = c(0.00, 0.25), guide = FALSE) +
+#    theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))
 
 
 ```
 
-attemp using highchater
+
+### Highchater: Hcmap
+
+Via join with mapdata
 
 ```{r}
-
 # mapdata <- get_data_from_map(download_map_data("countries/in/in-all"))
 # glimpse(mapdata)
-# 
-#  # mdt.melt.location.t100<- 
-#  mdt.melt.location.t100<- mdt.melt.location  %>%
-#    .[!is.na(value),list(.N), by=list(value)]%>%
-#    .[,z:=N]%>%
-#    .[,.SD[order(-N)]] %>%
-#    .[, head(.SD, 100),]
-#  mdt.melt.location.t100$color<- colorize(mdt.melt.location.t100$N)
+# Observations: 34
+# Variables: 20
+# $ hc-group    <chr> "admin1", "admin1", "admin1", "admin1", "admin1", "admin1", "admin1", "adm...
+# $ hc-middle-x <dbl> 0.65, 0.59, 0.50, 0.56, 0.46, 0.46, 0.51, 0.59, 0.47, 0.56, 0.60, 0.63, 0....
+# $ hc-middle-y <dbl> 0.81, 0.63, 0.74, 0.38, 0.64, 0.51, 0.34, 0.41, 0.60, 0.32, 0.47, 0.55, 0....
+# $ hc-key      <chr> "in-py", "in-ld", "in-wb", "in-or", "in-br", "in-sk", "in-ct", "in-tn", "i...
+# $ hc-a2       <chr> "PY", "LD", "WB", "OR", "BR", "SK", "CT", "TN", "MP", "GU", "GA", "NL", "M...
+# $ labelrank   <chr> "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2",...
+# $ hasc        <chr> "IN.PY", "IN.LD", "IN.WB", "IN.OR", "IN.BR", "IN.SK", "IN.CT", "IN.", "IN....
+# $ alt-name    <chr> "Pondicherry|Puduchcheri|PondichÃ©ry", "Ã\u008dles Laquedives|Laccadive|Mi...
+# $ woe-id      <chr> "20070459", "2345748", "2345761", "2345755", "2345742", "2345762", "200704...
+# $ fips        <chr> "IN22", "IN14", "IN28", "IN21", "IN34", "IN29", "IN37", "IN22", "IN35", "I...
+# $ postal-code <chr> "PY", "LD", "WB", "OR", "BR", "SK", "CT", "TN", "MP", NA, "GA", "NL", "MN"...
+# $ name        <chr> "Puducherry", "Lakshadweep", "West Bengal", "Orissa", "Bihar", "Sikkim", "...
+# $ country     <chr> "India", "India", "India", "India", "India", "India", "India", "India", "I...
+# $ type-en     <chr> "Union Territory", "Union Territory", "State", "State", "State", "State", ...
+# $ region      <chr> "South", "South", "East", "East", "East", "East", "Central", "South", "Cen...
+# $ longitude   <chr> "79.7758", "72.7811", "87.7289", "84.4341", "85.8134", "88.4482", "82.3069...
+# $ woe-name    <chr> "Puducherry", "Lakshadweep", "West Bengal", "Orissa", "Bihar", "Sikkim", "...
+# $ latitude    <chr> "10.9224", "11.2249", "23.0523", "20.625", "25.6853", "27.5709", "21.8044"...
+# $ woe-label   <chr> "Puducherry, IN, India", "Lakshadweep, IN, India", "West Bengal, IN, India...
+# $ type        <chr> "Union Territor", "Union Territor", "State", "State", "State", "State", "S...
+```
+Sadly I dont see an easy way to join the mapdata inforamtion together with the job listing information to provide state/region level information. i guess the likes of Mumbai, Bengaluru, Bangalore etc are actually cities name.
 
-is.data.table(mydat.filtered)
- 
+I resort to plotting them with the geocoded latitude and longitude with highchart, which depicted similar data to the ggmap in previous section.
+
+```{r}
  # Setting z,color and name parameter for plotting with highcharter 
- highcharter.plot <- setDT(mydat)[lon>60&lon<80] %>%
-   .[lat>10&lat<30]%>%
+ highcharter.plot <- setDT(mydat)[lon>60&lon<90] %>%
+   .[lat>5&lat<30]%>%
    .[,`:=`(
            name=value,
            z=N,
@@ -496,7 +673,7 @@ is.data.table(mydat.filtered)
 # plotting with highcharter
 hcmap("countries/in/in-all", name = "India") %>% 
   hc_add_series(data = highcharter.plot, type = "mapbubble",
-                name = "Job listing", maxSize = "25") %>% 
+                name = "Job listing", maxSize = "35") %>% 
   hc_title(text = "Locations of Job Posting") %>% 
   hc_subtitle(text = "only top 100 locations are included, the counts also include duplicates if the job is listed at multiple location") %>%
   hc_mapNavigation(enabled = TRUE) 
@@ -505,173 +682,332 @@ hcmap("countries/in/in-all", name = "India") %>%
 
 ## Job description
 
-
 Example output of jobsdescription
 
 ```{r}
-head(mdt$jobdescription, 2)
+head(mdt$jobdescription, 1)
 ```
 
 It seems this is not very well formated. Some of the useful information such as payrate and indsutry is also already extracted into individual column by pre-crawler. Still, it would be interesting to see if we can indentify additional useful information for job description.
 
+It seems every job description begins with  "Job Description Â  Send me Jobs like this". This word structure should be removed before any further comparison
+
+
+
 ```{r}
+## Removing the "Job Description Â  Send me Jobs like this" 
+mdt$jobdescription <- str_replace(mdt$jobdescription, "Job Description", "") %>%
+  str_replace(., "Send me Jobs like this", "")
+
+# Checking the output
+head(mdt$jobdescription, 1)
+```
+
+```{r, warning = FALSE, message=FALSE}
 require(tm)
 require(quanteda)
 require(wordcloud)
 require(slam) # for row_sums
+require(RColorBrewer)
 ```
 
+```{r}
+### create Document Feature Matrix 
+dfm.txt <- corpus(mdt$jobdescription, docvars = data.frame(grp = mdt$industry)) %>%
+  dfm(., groups = "grp", 
+      stem = T, 
+      remove=stopwords("english"),
+      remove_symbols = T,
+      remove_punct = T,
+      remove_numbers = T,
+      remove_url = T)
+
+dfm.txt
+```
+
+### Barplot of popular terms in job 
 
 ```{r}
-clean_VC <- VCorpus(VectorSource(mdt$jobdescription)) %>%
-  tm_map(removePunctuation) %>%
-  tm_map(removeNumbers) %>%
-  tm_map(tolower)  %>%
-  tm_map(removeWords, stopwords("english")) %>%
-  tm_map(stripWhitespace) %>%
-  tm_map(PlainTextDocument) %>%
-  tm_map(stemDocument, language = "english")
+## Data.Frame of Term frequency
+dt.freq<-data.frame(Language = names(topfeatures(dfm.txt,20)),
+                            N=topfeatures(dfm.txt,20))
 
-clean_VC.tdm <- TermDocumentMatrix(clean_VC)
+## Barplot of Term frequency
+setDT(dt.freq)[,Language:= fct_inorder(factor(Language))] %>%
+  ggvis(~Language, ~N) %>% 
+  layer_bars(fillOpacity := 0.1) %>%
+  add_axis("x", title = "Programming Language",
+           properties = axis_props(labels = list(angle = 45, align = "left", fontSize = 10))) %>%
+  add_axis("y", title = "Number of instance Mentioned")
 
-# Calculate the rowSums: term_frequency
-# Notice that tdm is actually simple-triplet_matrix class,
-# which is record as sparse matrix and has its own rowsum function
-# class(clean_VC.tdm)
-#  "TermDocumentMatrix"    "simple_triplet_matrix"
+```
 
-term_frequency<-row_sums(clean_VC.tdm)
+### Wordcloud of popular terms
 
+```{r, warning = FALSE}
+##warning =False in the knit/rmd to silence the warning of words that could not be fit on the page
 
-# Sort term_frequency in descending order
+## Rowsum to find individual term's frequency across all documents
+term_frequency<-row_sums(t(dfm.txt))
+
+## Sort term_frequency in descending order
 term_frequency<- sort(term_frequency,decreasing = T)
 
-# Plot a barchart of the 10 most common wordsm;'
-
+## Plot a barchart of the 10 most common wordsm;'
 barplot(term_frequency[1:10], col = "tan", las = 2)
 
-# Create word_freqs
+## Create word_freqs
 word_freqs <- data.frame(term = names(term_frequency), num = term_frequency)
-head(word_freqs)
+
+set.seed(4211)
+## Plot wordcloud
+wordcloud(word_freqs$term, word_freqs$num, max.words = 100,
+           random.order=FALSE, colors=brewer.pal(8,"Dark2"), rot.per=.3, scale=c(3,.5))
+```
 
 
-wordcloud(word_freqs$term, word_freqs$num, max.words = 100, 
-           random.order=FALSE, rot.per=0.35, colors=brewer.pal(8,"Dark2"))
+### Comparison of wordcloud by u=industry
+Note that this only consider the 1st/primary industry of the job records
+```{r}
+## Summarizing and identifying the most popular 8th industry 
+popular_industry_count <- mdt %>%
+  .[!is.na(industry),.N,by=list(industry)] %>%
+  .[,.SD[order(-N)]] %>%
+  .[, head(.SD, 8),]
+
+# popular_industry_count$industryS1
+```
+
+
+```{r, warning = FALSE}
+# tfidf(wikiDfm)
+
+textplot_wordcloud(dfm_select(dfm.txt, documents=popular_industry_count$industry[1:4]), 
+                   comparison = T, rot.per = .25, scale=c(2,.35),title.size =2)
+
+textplot_wordcloud(dfm_select(dfm.txt, documents=popular_industry_count$industry[5:8]), 
+                   comparison = T, rot.per = .25, scale=c(2,.35),title.size =2)
+```
+
+### Extracting Specific frequency of strings - Programming Langauges
+
+```{r}
+## Making a dictionary list of common and popular string list of programming languages
+myDict <- dictionary(list(git="git",
+                          c = "c",
+                          python = "python",
+                          java="java",
+                          cpp = "c++",
+                          chash= "csharp",
+                          r="r",
+                          javascript="javascript",
+                          php= "php",
+                          go="go",
+                          swift="swift"
+                          ))
+# the later two langauge might have issue identifying the correct frequency of the word as the names can also double as common word.
+
+## Applying the dictionary just defined on the job description column.
+ProgrammingL_popularity <- dfm(mdt$jobdescription, dictionary = myDict)
+
+## Topfeatures() to extract popular languages and its counts
+dt.ProgrammingL<-data.frame(Language = names(topfeatures(ProgrammingL_popularity)),
+                            N=topfeatures(ProgrammingL_popularity))
+
+## fct_inorder to reorder the langauge with the 
+setDT(dt.ProgrammingL)[,Language:= fct_inorder(factor(Language))] %>%
+  ggvis(~Language, ~N) %>% 
+  layer_bars(fillOpacity := 0.1) %>%
+  add_axis("x", title = "Programming Language",
+           properties = axis_props(labels = list(angle = 45, align = "left", fontSize = 15))) %>%
+  add_axis("y", title = "Number of instance Mentioned")
+
+## To extract frequency of words
+# freq <- textstat_frequency(ProgrammingL_popularity)
+# "textstat_frequency" is only available into quentda 0.99, which doesn't seem to be available by default at the moment
+```
+
+Strangely, Java is the most popular languages, it was mentioned 5000 times in job description. It is follower by c and javascript, though they are only half as popular. R is also rather popular, even somehow being more popular than python too.
+
+# Cross Data Analysis 
+### Industry, Payrate, Experience
+
+```{r}
+hcboxplot(x = mdt$m.payrate.Mean, 
+          var = mdt$industry) %>% 
+  hc_chart(type = "column")
+```
+
+If we were to ignore the outliers (which would be heavily influenced by the amount of job listing in that particular industry, it seems that "Iron and Steel" , "IT-Software" and "Strategy/Management consulting Firm" command the best payrate. 
+
+Some industries payrate are rather pathetic, this is exemplify by "Animation/Gaming", "Government/Defense", "Well/Fitness/Sports" and "NGO/Social Services". At this point, I am not sure if it is caused by high attrition rates (people just dont stay in these industry for long, they change) or that the pay is
+
+```{r}
+hcboxplot(x = mdt$m.payrate.Mean, 
+          var = mdt$m.experience.Median) %>% 
+  hc_chart(type = "column")
 ```
 
 ```{r}
+filtered.IMP <- mdt[!is.na(m.experience.Median) & !is.na(m.payrate.Mean),
+    .SD, .SDcols=c("m.experience.Median","m.payrate.Mean")]
 
-clean_VC_sparse_r40<-removeSparseTerms(clean_VC.tdm, 0.4)
-tdm<-sort(rowSums(as.matrix(clean_VC_sparse_r40)), decreasing  = TRUE)
-word_freqs <- data.frame(term = names(tdm), num = tdm)
+tempt_ggplot <- filtered.IMP %>%
+  ggplot(aes(x=factor(m.experience.Median), y=m.payrate.Mean)) +  
+  geom_boxplot() +
+  geom_smooth(method="lm", se=FALSE, aes(group=1)) +
+    geom_text(x = 30, y = 4, label = sprintf("adj_r2: %s",
+        signif(
+          glance(lm(m.experience.Median~m.payrate.Mean, filtered.IMP))$adj.r.squared,
+               3)), parse = TRUE)
+ggplotly(tempt_ggplot) %>%
+  layout(title = 'Payrate vs Experience',
+         xaxis = list(title = 'Experience (years)[range]', tickangle = 90),
+         yaxis = list(title = 'Annual Payrate'))
 
-set.seed(142)   
-wordcloud(word_freqs$term, word_freqs$num, min.freq=20, scale=c(5, .1), colors=brewer.pal(6, "Dark2"))   
 ```
 
+
+
 ```{r}
-clean_VC_sparse_r10<-removeSparseTerms(clean_VC.tdm, 0.1)
- tdm<-as.matrix(clean_VC_sparse_r10)
+## archieve of using ggvis for plotting
+
+# mdt[!is.na(m.payrate.Mean)] %>%
+#   ggvis(~industryS1, ~m.payrate.Mean) %>%
+#   layer_boxplots(fillOpacity := 0.1, width = 0.5) %>% 
+#   add_axis("x", title = "Payrate PA Distribution",
+#            properties = axis_props(labels = list(angle = 90, align = "left", fontSize = 10))) %>%
+#   add_axis("y", title = "IndustryS1")
+
+# mdt[!is.na(m.experience.Median)] %>%
+#   ggvis(~industryS1, ~m.experience.Median) %>%
+#   layer_boxplots(fillOpacity := 0.1, width = 0.5) %>% 
+#   add_axis("x", title = "Payrate PA Distribution",
+#            properties = axis_props(labels = list(angle = 90, align = "left", fontSize = 10))) %>%
+#   add_axis("y", title = "IndustryS1")
+```
+
+#### Exponentially Wage Growth? 
+
+IF we assume that Pay/Wage grew exponentially
+$$Pay = Base * (1 + R) ^ T$$
+$$Log(Pay) = T * Log(Base * (1 + R))$$
+
+```{r}
+
+tempt_ggplot <- filtered.IMP %>%
+  ggplot(aes(x=factor(log(m.experience.Median)), y=log(m.payrate.Mean))) +  
+  geom_boxplot() +
+  geom_smooth(method="lm", formula=y~x, se=FALSE, aes(group=1)) +
+  geom_text(x = 30, y = 4, label = sprintf("adj_r2: %s",
+        signif(
+          glance(lm(m.experience.Median~log(m.payrate.Mean), filtered.IMP))$adj.r.squared,
+               3)), parse = TRUE)
+ggplotly(tempt_ggplot)  %>%
+  layout(title = 'log(Payrate) vs Experience',
+         xaxis = list(title = 'Experience (years)[range]', tickangle = 90),
+         yaxis = list(title = 'log(Annual Payrate)'))
+
+```
+
+While both plots (with log(Pay) and pay)  have ~ 0 p-value, the adjusted r-square of linear plot are higher than that of log plot, although 0.52 it is still not very significant. But perhaps we can narrow down to specific industry in later sections and explore in full.
+
+```{r}
+mdt<-mdt[, m.experience.Cut := cut(m.experience.Median, breaks=c(-Inf, 3*(0:3), 10+4*(0:2), Inf), right=F)]
+mdt[is.na(m.experience.Cut)]$m.experience.Cut <- "Not listed"
+# By default NA  ( those not in the range of the cut are outside our boundaries and not counted. Started the break with -Inf to include them in the calculation
+
+hcboxplot(x = mdt$m.payrate.Mean, 
+          var = mdt$m.experience.Cut,
+          var2 = mdt$industry,
+          outliers = FALSE) %>% 
+  hc_chart(type = "column")
+```
+
+### Education vs Payrate
+
+This section examine the payrate commanded by Gradautes and people with various years of working experience. 
  
-comparison.cloud(tdm, colors = c("orange", "blue"), max.words = 50)
-```
-
-
 ```{r}
-library(RColorBrewer)
-commonality.cloud(tdm, random.order=FALSE, scale=c(5, .5),colors = brewer.pal(4, "Dark2"), max.words=400)
-```
+mdt.melt.Education <- melt(mdt[!is.na(m.payrate.Mean)],
+     measure.vars = patterns("^m.Education.tf"), 
+     na.rm=T)
 
-
-```{r}
-docs <-VC %>%
-  tm_map(removePunctuation) %>%
-  tm_map(removeNumbers) %>%
-  tm_map(tolower)  %>%
-  tm_map(removeWords, stopwords("english")) %>%
-  tm_map(stripWhitespace) %>%
-  tm_map(PlainTextDocument)
-
-myCorpusCopy<- docs ## creating a copy to be used as a dictionary
-
-# docs <- docs %>%
-#   tm_map(stemDocument) %>%
-#   tm_map(stemCompletion, dictionary = myCorpusCopy)
-
-docs.tdm<-TermDocumentMatrix(docs)
-
-term_frequency<-row_sums(clean_VC.tdm)
-
-# Sort term_frequency in descending order
-term_frequency<- sort(term_frequency,decreasing = T)
-
-# Plot a barchart of the 10 most common words
-barplot(term_frequency[1:10], col = "tan", las = 2)
-
-require(wordcloud)
-
-# Create word_freqs
-word_freqs <- data.frame(term = names(term_frequency), num = term_frequency)
-head(word_freqs)
-
-
-wordcloud(word_freqs$term, word_freqs$num, max.words = 100, 
-           random.order=FALSE, rot.per=0.35, colors=brewer.pal(8,"Dark2"))
-
-
+hcboxplot(x = mdt.melt.Education$m.payrate.Mean, 
+          var = mdt.melt.Education$m.experience.Cut, 
+          var2 = mdt.melt.Education$variable,
+          outliers = FALSE) %>% 
+  hc_chart(type = "column") 
 
 ```
 
+It seems that the level of education for fresh gradautes and people with up to 3 years worth of working experience does not resulted in a significant difference in payrate (ignoring outliers).
+
+Although I wonder if the differences are not shown clearly are due to the scaling on the y-axis.
 
 ```{r}
-inaugdfm <- dfm(mdt$jobdescription, remove = stopwords("english"), 
-                stem = TRUE, groups=mdt$industry1, ngrams = 2)
-# inaugdfm <- dfm(mdt$jobdescription)
-                
-                
-tdm_trim<-t(dfm_trim(inaugdfm, max_docfreq = .8))
-head(tdm_trim)
-
-term_frequency<-row_sums(tdm_trim)
-
-# Sort term_frequency in descending order
-term_frequency<- sort(term_frequency,decreasing = T)
-
-word_freqs <- data.frame(term = names(term_frequency), num = term_frequency)
-
-wordcloud(word_freqs$term, word_freqs$num, max.words = 100, 
-           random.order=FALSE, rot.per=0.35, colors=brewer.pal(8,"Dark2"))
-
-
+# Filtering to plot for only those jobs that listed 0 to 3 job experience.
+hcboxplot(x = mdt.melt.Education[m.experience.Cut=="[0,3)"]$m.payrate.Mean, 
+          var = mdt.melt.Education[m.experience.Cut=="[0,3)"]$variable,
+          name = "Length", color = "#2980b9") 
 ```
 
 ```{r}
-docs<-c(mdt$jobdescription, mdt$industry1)
-data(data_corpus_inaugural)
+mdt[!is.na(m.payrate.Mean)&!is.na(m.experience.Median)&!is.na(industry),
+    list(intercept=coef(lm(m.payrate.Mean~m.experience.Median))[1],
+         coef=coef(lm(m.payrate.Mean~m.experience.Median))[2],
+         p.value=summary(lm(m.payrate.Mean~m.experience.Median))$coefficients[,4] ),
+    by=industry]
+
+mdt[!is.na(m.payrate.Mean), .N, by=industry] %>%
+  .[N>10,] %>%
+  .[,.SD[order(-N)]] 
 
 
-data.frame(inaugSpeech = texts(mdt$jobdescription), docvars(as.factor(mdt$industry1)))
-            
-            
-myCorpus <- corpus_subset(data.frame(mdt$jobdescription)
-
-
-myStemMat <- dfm(myCorpus, remove = stopwords("english"), stem = TRUE, remove_punct = TRUE)
-myStemMat[, 1:5]
-
+mdt[!is.na(m.payrate.Mean)&!is.na(m.experience.Median)&!is.na(industry),] %>%
+  group_by(industry) %>%
+  do(tidy(lm(m.payrate.Mean ~ m.experience.Median, data = .)))
 ```
 
+#### IT - Software
+
+Seeing that we have data on the wages and job listing  for IT - Software
 
 ```{r}
-# install.packages("leaflet")
-# library(leaflet)
-# 
-# leaflet() %>% addTiles() %>% 
-#     setView(lng = 78, lat = 10.5, zoom = 6)
+# Removing some unnesssary columns
+mdt.melt.location[ ,`:=`(variable = NULL, payrate.M = NULL, jobid = NULL,
+                         jobdescription = NULL, experience = NULL, 
+                         company = NULL, education = NULL,
+                         experience.M = NULL, postdate = NULL,
+                         payrate = NULL, uniq_id = NULL)]
+setnames(mdt.melt.location, "value", "location")
 
+# melting for education , this would create duplicate job posting for difference level of education
+mdt.melt.location.Education <- melt(mdt.melt.location, 
+     measure.vars = patterns ("^m.Education.tf."), na.rm = T, variable.name = "EducationLevel") 
+mdt.melt.location.Education$value <- NULL 
 
+mdt.melt.location.Education <- mdt.melt.location.Education %>%
+  .[!is.na(m.payrate.Mean)|industry=="IT-Software / Software Services",]
+  
 
+  
+# formula = m.payrate.Mean ~ m.Education.UG + m.Education.tf.UG + m.Education.tf.PG + m.Education.tf.MBA + value + Fare + Embarked
 ```
 
+```{r}
+# Fit lm model using 5 x 5-fold CV: model
+model <- train(
+  m.payrate.Mean ~ m.experience.Median + EducationLevel, 
+  mdt.melt.location.Education,
+  method = "rpart", na.action = na.omit,
+  trControl = trainControl(
+    method = "cv", number = 5, verboseIter = TRUE
+  )
+)
+
+# Print model to console
+model
+```
 
 
