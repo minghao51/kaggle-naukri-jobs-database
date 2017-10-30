@@ -256,8 +256,15 @@ mdt %>%
   .[,lapply(.SD, sum, na.rm=TRUE) ,.SDcols= (names(mdt) %like% "^m.Education.tf*")]
 ```
 
+### Education Factor
+
+Note that the number of job listing table on top allowed mulitple entries of job for each different ncategories of education. For example, A job that listed education requirement as UG: and PG: would be counted as 1 in both categories. 
+
+The following codes created a section that would only attach the highest recorded education for everyt individual job listing. Ie, if the job listed for "UG: B.Sc, PG: Masters", it would be recorded as Master level job in this column. I assume the level of education follow a nested/linear path that corresponds to: Diploma > UG > MBA > PG > DR. The position of MBA is perhaps slightly controversial.
 
 ```{r}
+# This list of data table chain simply utilise grep(str_detect) and is.na( the existance of UG, PG, DR) in previous education columns to assign a unique factor to the column
+
 mdt %>%
   .[grep("Diploma",education),m.Education.factor := "Diploma"] %>% 
   .[!is.na(m.Education.UG),m.Education.factor := "UG"] %>%
@@ -266,6 +273,9 @@ mdt %>%
   .[!is.na(m.Education.DR),m.Education.factor := "DR"]
   
 mdt$m.Education.factor <- factor(mdt$m.Education.factor)
+
+
+# There outough to be better methods to melt, extract the highest education requirement information but I failed to extracted/melt it cleanly from the previous extracted information.
 ```
 
 ## Skills
@@ -365,9 +375,6 @@ mdt[, .N, by= industry] %>%
     labels = list(angle = 45, align = "left", fontSize = 10)
   )) %>%
   add_axis("y", title = "Number of posting")
-
-
-
 ```
 
 ###Least popular Industry
@@ -441,9 +448,16 @@ mdt[!is.na(m.experience.L),]%>%
   layer_densities(adjust = 2) %>%  #adjust parameter to smooth the wiggliness of density
   add_axis("x", title = "Number of years") %>%
   add_axis("y", title = "Density")
-
 ```
 
+
+### Aggregate/Dice Experience to larger groups
+```{r}
+mdt<-mdt[, m.experience.Cut := cut(m.experience.Median, 
+                                   breaks=c(-Inf, 3*(0:3), 10+4*(0:2), Inf), right=F)]
+mdt[is.na(m.experience.Cut)]$m.experience.Cut <- "Not listed"
+# By default NA  ( those not in the range of the cut are outside our boundaries and not counted. Started the break with -Inf to include them in the calculation
+```
 
 
 ## Number of positions
@@ -451,7 +465,7 @@ mdt[!is.na(m.experience.L),]%>%
 class(mdt$numberofpositions)
 summary(mdt$numberofpositions)
 ```
-Intestingly, there are job listing that have 2000 positions, a quick look at this outlier.
+Intestingly, there are job posting listed to have 2000 positions available, a quick look at this outlier.
 
 ```{r}
 mdt[numberofpositions==2000]
@@ -460,8 +474,11 @@ mdt[numberofpositions==2000]
 The majority of the job listing doesn't list a number of the number of positions, I think it is reasonable to assump those without listed number in 'Number of position' as 1. This may not be entirely accurate but it will manipulation with other data in later section.
 
 ```{r}
-mdt<-mdt[is.na(numberofpositions), numberofpositions:=1]
-summary(mdt$numberofpositions)
+mdt<-mdt%>%
+  .[, m.Npositions:=numberofpositions] %>%
+  .[is.na(numberofpositions), m.Npositions:=1]
+
+summary(mdt$m.Npositions)
 ```
 
 Now all recorded number of positions have a valid number.
@@ -500,10 +517,10 @@ max(mdt$postdate_time, na.rm =T)
 
 
 #
-mdt[, timeCut := cut(as.POSIXct(postdate_time), breaks="1 month")]
+mdt[, m.timeCut := cut(as.POSIXct(postdate_time), breaks="1 month")]
 
-mdt[!is.na(timeCut), .N, by=timeCut] %>%
-  ggvis(~timeCut, ~N) %>%
+mdt[!is.na(m.timeCut), .N, by=m.timeCut] %>%
+  ggvis(~m.timeCut, ~N) %>%
   layer_bars(fillOpacity := 0.1) %>%
   add_axis("x", properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
@@ -545,27 +562,32 @@ mdt$joblocation_address <- gsub("\\(.*\\)","", mdt$joblocation_address)
 
 # splitting by ",", "/", and " "
 splits <- max(lengths(strsplit(mdt$joblocation_address, ", |/")))
-mdt <- mdt[,paste0("locationS", 1:splits) := tstrsplit(joblocation_address, ", |/")] 
+mdt <- mdt[,paste0("m.locationS", 1:splits) := tstrsplit(joblocation_address, ", |/")] 
 mdt$joblocation_address<- NULL # removing the original data
 # some joblocations appears to use space, " " as delimiter... 
 # Obviously, implentating strsplit on " " would introduce additional issues (ie location name with space. Thankfully this phenomena is rathe rare, I would just ignore " " as a delimiter for now.
   
 # this will also allow job with multiple location listing to be listed to different location (duplicates), for example 
-mdt.melt.location <-  melt(mdt,  measure.vars = patterns("^locationS"))
+mdt.melt.location <-  melt(mdt,  measure.vars = patterns("^m.locationS"), value.name = "m.i.location")
+# where m.i.location indicates modified and individual extracted location
+
+#removing variable that just indicate the order of the "m.locationSX" in Location
+mdt.melt.location$variable<-  NULL
+
 
 # Setting  empty strings to NA
-mdt.melt.location[value==""] <- NA
+mdt.melt.location[m.i.location==""] <- NA
 
 # Trimming white space from the value
-mdt.melt.location$value <- (trimws(mdt.melt.location$value))
+mdt.melt.location$m.i.location <- trimws(mdt.melt.location$m.i.location)
 
 # plotting most popular location for job listing
 mdt.melt.location  %>%
-  .[!is.na(value),.N,by=list(value)] %>%
+  .[!is.na(m.i.location),.N,by=list(m.i.location)] %>%
   .[,.SD[order(-N)]] %>%
   .[, head(.SD, 10),] %>%
-  .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
-  ggvis(x=~value, y=~N) %>% 
+  .[,value:=fct_inorder(factor(m.i.location))] %>% # fct_infreq from "forcats" 
+  ggvis(x=~m.i.location, y=~N) %>% 
   layer_bars(fillOpacity := 0.1) %>%
   add_axis("x", title = "location",properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
@@ -580,30 +602,32 @@ Regardless, it seems Bengaluru, Bangolore and Mumbai are among the most popular 
 
 
 ```{r}
-# tally the count of location with top 100 locations, 
+## In this section, I used geocodes to query google for the lat and lon of respective locations.
+# this will be done only with top 100 locations by their respective popularity 
 # which incidently also only inlcudes location with more than ~10 counts of job listings.
-mdt.melt.location.count.t100<-mdt.melt.location  %>%
-  .[!is.na(value),.N,by=list(value)] %>%
+mdt.melt.location.count.t100 <- mdt.melt.location  %>%
+  .[!is.na(m.i.location),.N,by=list(m.i.location)] %>%
   .[,.SD[order(-N)]] %>%
   .[, head(.SD, 100),]
-
 
 # making a list of file in current working directory
 filelist <- list.files()
 
 # mydat exist, read it , otherwise, geocodes to find lat lon for the locations
 if(any(filelist=="mydat.rds")){
+  #read the created .rds containing the require data
   mydat <- readRDS("mydat.rds")
-}else {
+}else{
+  
   # using geocodes ( part of ggmap package) to find the lat and lon for the top 100 location
   # perhaps not the cleanest way, some of the location will not be the most accurate.
-  geocodes <- geocode(as.character(mdt.melt.location.count.t100$value))
+  geocodes <- geocode(as.character(mdt.melt.location.count.t100$m.i.location))
+  # might be better to batch feed it to avoid over query limit, 
+  # which is an issue for network with good connection
   mydat <- data.frame(mdt.melt.location.count.t100[,1:2],geocodes)
-  saveRDS(mydat, "mydat.rds")}
-
-
-
-mydat <- readRDS("mydat.rds")
+  saveRDS(mydat, "mydat.rds")
+  
+  }
 
 # # The locations that have absurd lon and lat are to be removed
 #  mydat.filtered <- setDT(mydat)[lon>60&lon<90] %>%
@@ -621,8 +645,6 @@ india =  c(lon =78.96, lat = 20.59)
 #    scale_fill_gradient(low = "green", high = "red") +
 #    scale_alpha(range = c(0.00, 0.25), guide = FALSE) +
 #    theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))
-
-
 ```
 
 
@@ -665,7 +687,7 @@ I resort to plotting them with the geocoded latitude and longitude with highchar
  highcharter.plot <- setDT(mydat)[lon>60&lon<90] %>%
    .[lat>5&lat<30]%>%
    .[,`:=`(
-           name=value,
+           name=m.i.location,
            z=N,
            color= colorize(N)
            )] 
@@ -682,7 +704,7 @@ hcmap("countries/in/in-all", name = "India") %>%
 
 ## Job description
 
-Example output of jobsdescription
+Example output of jobs description column
 
 ```{r}
 head(mdt$jobdescription, 1)
@@ -783,10 +805,10 @@ popular_industry_count <- mdt %>%
 # tfidf(wikiDfm)
 
 textplot_wordcloud(dfm_select(dfm.txt, documents=popular_industry_count$industry[1:4]), 
-                   comparison = T, rot.per = .25, scale=c(2,.35),title.size =2)
+                   comparison = T, rot.per = .25, scale=c(2,.55),title.size =1)
 
 textplot_wordcloud(dfm_select(dfm.txt, documents=popular_industry_count$industry[5:8]), 
-                   comparison = T, rot.per = .25, scale=c(2,.35),title.size =2)
+                   comparison = T, rot.per = .25, scale=c(2,.55),title.size =1)
 ```
 
 ### Extracting Specific frequency of strings - Programming Langauges
@@ -830,22 +852,92 @@ setDT(dt.ProgrammingL)[,Language:= fct_inorder(factor(Language))] %>%
 Strangely, Java is the most popular languages, it was mentioned 5000 times in job description. It is follower by c and javascript, though they are only half as popular. R is also rather popular, even somehow being more popular than python too.
 
 # Cross Data Analysis 
+
+
+```{r}
+# Preserving only extracted data/useful data in the dt
+mdt <- mdt %>%
+  .[,(colnames(.) %like% "^m."| colnames(.)=="industry"| colnames(.)=="uniq_id"), 
+             with=FALSE]
+
+# Another modified data table with with multiple listing of locations as multiple entries
+mdt.melt.location <- mdt.melt.location %>%
+  .[,(colnames(.) %like% "^m."| colnames(.)=="industry"| colnames(.)=="uniq_id"), with=FALSE]
+```
+
 ### Industry, Payrate, Experience
 
 ```{r}
 hcboxplot(x = mdt$m.payrate.Mean, 
           var = mdt$industry) %>% 
-  hc_chart(type = "column")
+  hc_chart(type = "column") %>% 
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Industry") 
 ```
 
-If we were to ignore the outliers (which would be heavily influenced by the amount of job listing in that particular industry, it seems that "Iron and Steel" , "IT-Software" and "Strategy/Management consulting Firm" command the best payrate. 
+If we were to ignore the outliers (which would be heavily influenced by the amount of job listing in that particular industry), it seems that "Iron and Steel" , "IT-Software" and "Strategy/Management consulting Firm" command the best payrate. Although, "Pulp and Paper"  surprisingly also seems like one of the better paying industry.
 
-Some industries payrate are rather pathetic, this is exemplify by "Animation/Gaming", "Government/Defense", "Well/Fitness/Sports" and "NGO/Social Services". At this point, I am not sure if it is caused by high attrition rates (people just dont stay in these industry for long, they change) or that the pay is
+Though it would be a grave mistake if we conclude straight away that that Pul and Paper are the best industry (Paywise) to work in, as this ignore other factors such as number of data as well as requirement in experience.
+
+The table below listed the Median Pay of listing by different industries.
+
+```{r}
+mdt[!is.na(m.payrate.Mean),.(.N, 
+                              Q1=quantile(m.payrate.Mean, 0.25),
+                              PayMed=median(m.payrate.Mean),
+                              Q3=quantile(m.payrate.Mean, 0.75)), by=industry] %>%
+  .[,.SD[order(-PayMed)]] %>%
+  .[, head(.SD, 30),] 
+```
+
+Evidently, Pulp and Paper only have two entries, thus it's pay scale is likely heavily skrewed. The high PayScale might be only reserved for c-level employee. 
+
+Also, we have zero clue with regards of how the data (which is a subset of the actual listing) scale when all the data are considered. Regardless, having more listing of job in an industry would probably portray a clearer picture with regards the to pay.
+
+Thus, if we restrict our boxplot to industry with more than 20 listing.
+
+```{r}
+t.filtered.mdt <- mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]
+  
+  hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
+          var = t.filtered.mdt$industry) %>% 
+  hc_chart(type = "column") %>% 
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Industry") 
+```
+
+```{r}
+mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]%>%
+  .[!is.na(m.payrate.Mean), .(.N, 
+                              Q1=quantile(m.payrate.Mean, 0.25),
+                              PayMed=median(m.payrate.Mean),
+                              Q3=quantile(m.payrate.Mean, 0.75)), by=industry] %>%
+  .[,.SD[order(-PayMed)]] %>%
+  .[, head(.SD, 10),]
+```
+
+
+```{r}
+mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]%>%
+  .[!is.na(m.payrate.Mean), .(.N, 
+                              Q1=quantile(m.payrate.Mean, 0.25),
+                              PayMed=median(m.payrate.Mean),
+                              Q3=quantile(m.payrate.Mean, 0.75)), by=industry] %>%
+  .[,.SD[order(-PayMed)]] %>%
+  .[, tail(.SD, 10),]
+```
+
+Some industries payrate are rather pathetic - both the median of the industry and the range ( Q3-Q1) is low, the latitude ( or margin) to growth in those industry would be restricted. This is exemplify by "BPO/Call Centre", "Recruitment/Staffing", "Teaching/Training" and "Healthcare". 
+
+This is a little at odds with the market based "demand", as  "Call Centre", "Education", "Hospital" are industry that posted most job on the database.
+
+
+
+
 
 ```{r}
 hcboxplot(x = mdt$m.payrate.Mean, 
           var = mdt$m.experience.Median) %>% 
-  hc_chart(type = "column")
+  hc_chart(type = "column") %>% 
+  hc_title(text = "Plot of Payrate(Mean, PA) vs experience (yrs)") 
 ```
 
 ```{r}
@@ -861,7 +953,7 @@ tempt_ggplot <- filtered.IMP %>%
           glance(lm(m.experience.Median~m.payrate.Mean, filtered.IMP))$adj.r.squared,
                3)), parse = TRUE)
 ggplotly(tempt_ggplot) %>%
-  layout(title = 'Payrate vs Experience',
+  layout(title = 'Payrate) vs Experience',
          xaxis = list(title = 'Experience (years)[range]', tickangle = 90),
          yaxis = list(title = 'Annual Payrate'))
 
@@ -889,14 +981,16 @@ ggplotly(tempt_ggplot) %>%
 
 #### Exponentially Wage Growth? 
 
-IF we assume that Pay/Wage grew exponentially
+If we assume that Pay/Wage grew exponentially
 $$Pay = Base * (1 + R) ^ T$$
 $$Log(Pay) = T * Log(Base * (1 + R))$$
+With regards to years
+
+$$Log(m.experience.Median) = Log(Pay)$$
 
 ```{r}
-
 tempt_ggplot <- filtered.IMP %>%
-  ggplot(aes(x=factor(log(m.experience.Median)), y=log(m.payrate.Mean))) +  
+  ggplot(aes(x=factor(m.experience.Median), y=log(m.payrate.Mean))) +  
   geom_boxplot() +
   geom_smooth(method="lm", formula=y~x, se=FALSE, aes(group=1)) +
   geom_text(x = 30, y = 4, label = sprintf("adj_r2: %s",
@@ -913,20 +1007,19 @@ ggplotly(tempt_ggplot)  %>%
 While both plots (with log(Pay) and pay)  have ~ 0 p-value, the adjusted r-square of linear plot are higher than that of log plot, although 0.52 it is still not very significant. But perhaps we can narrow down to specific industry in later sections and explore in full.
 
 ```{r}
-mdt<-mdt[, m.experience.Cut := cut(m.experience.Median, breaks=c(-Inf, 3*(0:3), 10+4*(0:2), Inf), right=F)]
-mdt[is.na(m.experience.Cut)]$m.experience.Cut <- "Not listed"
-# By default NA  ( those not in the range of the cut are outside our boundaries and not counted. Started the break with -Inf to include them in the calculation
+
 
 hcboxplot(x = mdt$m.payrate.Mean, 
           var = mdt$m.experience.Cut,
           var2 = mdt$industry,
           outliers = FALSE) %>% 
-  hc_chart(type = "column")
+  hc_chart(type = "column") %>%
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Industry")
 ```
 
 ### Education vs Payrate
 
-This section examine the payrate commanded by Gradautes and people with various years of working experience. 
+This section examine the payrate commanded by people with different amount of Education with respect to their level of education. 
  
 ```{r}
 mdt.melt.Education <- melt(mdt[!is.na(m.payrate.Mean)],
@@ -937,13 +1030,13 @@ hcboxplot(x = mdt.melt.Education$m.payrate.Mean,
           var = mdt.melt.Education$m.experience.Cut, 
           var2 = mdt.melt.Education$variable,
           outliers = FALSE) %>% 
-  hc_chart(type = "column") 
-
+  hc_chart(type = "column") %>%
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education")
 ```
 
 It seems that the level of education for fresh gradautes and people with up to 3 years worth of working experience does not resulted in a significant difference in payrate (ignoring outliers).
 
-Although I wonder if the differences are not shown clearly are due to the scaling on the y-axis.
+On the next plot, the salary differences for poeple with little to no experience would be examined solely, as the difference in payscale may not appear significant when compare to other groups due to differences in magnitudes (y-axis).
 
 ```{r}
 # Filtering to plot for only those jobs that listed 0 to 3 job experience.
@@ -952,7 +1045,54 @@ hcboxplot(x = mdt.melt.Education[m.experience.Cut=="[0,3)"]$m.payrate.Mean,
           name = "Length", color = "#2980b9") 
 ```
 
+The previous plots counts multiple of job listing when a job listed degree(UG), diploma as applicable to the requirement. This in effect would lower the actual differences
+
+However, in real life (which means the current employer market), when the number of application are high, employer would normally favor those with advance degree (of cause experience still matter). 
+
+Not to mention even for employee, given a choice, few would be willing to underemploy/undersell themselves for position require lower level of education.
+
 ```{r}
+hcboxplot(x = mdt$m.payrate.Mean, 
+          var = mdt$m.experience.Cut, 
+          var2 = mdt$m.Education.factor,
+          outliers = FALSE) %>% 
+  hc_chart(type = "column") 
+
+# table<-mdt%>%
+#   .[,med.pay:=median(m.payrate.Mean), by =c("m.Education.factor", "m.experience.Cut") ]
+```
+
+Overall, it is quite obvious that assigning the in single highest education requirement to individual job listing yield a much greater difference in payrate, I would think this is more accurate in reflecting the job market. This perhaps only fails when the demand of that particular expertise/industry for personal is very high.
+
+#### With regards to Industry 
+
+```{r}
+
+# industry_cout_table_40<-mdt[!is.na(m.payrate.Mean), count:.N, by= industry] %>%
+#   .[,.SD[order(-N)]] %>%
+#   head(., 40)
+#   
+# industry_cout_table_40$industry <- droplevels(industry_cout_table_40$industry)
+# factor(industry_cout_table_40$industry)
+# 
+# mdt[industry_cout_table_40$industry,]
+# 
+# (colnames(mdt) %in% industry_cout_table_40$industry)
+
+
+
+hcboxplot(x = mdt$m.payrate.Mean, 
+          var = mdt$m.experience.Cut, 
+          var2 = mdt$industry,
+          outliers = FALSE) %>% 
+  hc_chart(type = "column") %>%
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education")
+```
+
+
+```{r}
+
+
 mdt[!is.na(m.payrate.Mean)&!is.na(m.experience.Median)&!is.na(industry),
     list(intercept=coef(lm(m.payrate.Mean~m.experience.Median))[1],
          coef=coef(lm(m.payrate.Mean~m.experience.Median))[2],
@@ -969,6 +1109,7 @@ mdt[!is.na(m.payrate.Mean)&!is.na(m.experience.Median)&!is.na(industry),] %>%
   do(tidy(lm(m.payrate.Mean ~ m.experience.Median, data = .)))
 ```
 
+### Case study
 #### IT - Software
 
 Seeing that we have data on the wages and job listing  for IT - Software
