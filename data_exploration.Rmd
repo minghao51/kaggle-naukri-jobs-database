@@ -1109,19 +1109,20 @@ mdt[!is.na(m.payrate.Mean)&!is.na(m.experience.Median)&!is.na(industry),] %>%
   do(tidy(lm(m.payrate.Mean ~ m.experience.Median, data = .)))
 ```
 
-### Case study
-#### IT - Software
+### Case study of a industry
 
-Seeing that we have data on the wages and job listing  for IT - Software
+Since we have most abundant data for the listing of jobs for "IT - Software / Software services" industry. Let's explore this particular industry in more depth.
+
+#### IT - Software / Software services
 
 ```{r}
-# Removing some unnesssary columns
-mdt.melt.location[ ,`:=`(variable = NULL, payrate.M = NULL, jobid = NULL,
-                         jobdescription = NULL, experience = NULL, 
-                         company = NULL, education = NULL,
-                         experience.M = NULL, postdate = NULL,
-                         payrate = NULL, uniq_id = NULL)]
-setnames(mdt.melt.location, "value", "location")
+# # Removing some unnesssary columns
+# mdt.melt.location[ ,`:=`(variable = NULL, payrate.M = NULL, jobid = NULL,
+#                          jobdescription = NULL, experience = NULL, 
+#                          company = NULL, education = NULL,
+#                          experience.M = NULL, postdate = NULL,
+#                          payrate = NULL, uniq_id = NULL)]
+# setnames(mdt.melt.location, "value", "location")
 
 # melting for education , this would create duplicate job posting for difference level of education
 mdt.melt.location.Education <- melt(mdt.melt.location, 
@@ -1131,8 +1132,52 @@ mdt.melt.location.Education$value <- NULL
 mdt.melt.location.Education <- mdt.melt.location.Education %>%
   .[!is.na(m.payrate.Mean)|industry=="IT-Software / Software Services",]
   
+colnames(mdt.melt.location)
 
-  
+## Time of posting
+# fitering for only data with valid payrate data and IT software industry
+mdt.melt.location %>%
+  .[!is.na(m.payrate.Mean)&industry=="IT-Software / Software Services",] %>%
+  .[!is.na(m.timeCut), .N, by=m.timeCut] %>%
+  ggvis(~m.timeCut, ~N) %>%
+  layer_bars(fillOpacity := 0.1) %>%
+  add_axis("x", properties = axis_props(
+    labels = list(angle = 45, align = "left", fontSize = 10)
+  ))
+
+mdt.melt.location %>%
+  .[!is.na(m.payrate.Mean)&industry=="IT-Software / Software Services",] %>%
+  .[, .(.N, Payratemedian=median(m.payrate.Mean), 
+        Q1=quantile(m.payrate.Mean, 0.25),
+        Q3=quantile(m.payrate.Mean, 0.75)), by = m.i.location] %>%
+  .[order(-N)]
+
+
+
+mdt.melt.location %>%
+  .[!is.na(m.payrate.Mean)&industry=="IT-Software / Software Services",] %>%
+  .[, .(.N, Payratemedian=median(m.payrate.Mean), 
+        Q1=quantile(m.payrate.Mean, 0.25),
+        Q3=quantile(m.payrate.Mean, 0.75)), by = .(m.experience.Cut,  m.Education.factor, m.i.location)] %>%
+  .[order(-N)]
+
+
+mapdata <- get_data_from_map(download_map_data("countries/in/in-all"))
+glimpse(mapdata)
+mapdata$latitude
+mapdata$(longitude)
+mydat$lat
+
+key<-setDT(mapdata)[, c("longitude", "latitude", "hc-a2"), with = FALSE]
+key
+setkey
+
+mapdata$`hc-a2`
+# dt[J(x), roll="nearest"]
+dt[J(x), roll="nearest"]
+
+data.table
+
 # formula = m.payrate.Mean ~ m.Education.UG + m.Education.tf.UG + m.Education.tf.PG + m.Education.tf.MBA + value + Fare + Embarked
 ```
 
@@ -1151,4 +1196,4 @@ model <- train(
 model
 ```
 
-
+#### Location difference
