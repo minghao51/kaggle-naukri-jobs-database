@@ -653,7 +653,7 @@ india =  c(lon =78.96, lat = 20.59)
 Via join with mapdata
 
 ```{r}
-# mapdata <- get_data_from_map(download_map_data("countries/in/in-all"))
+mapdata <- get_data_from_map(download_map_data("countries/in/in-all"))
 # glimpse(mapdata)
 # Observations: 34
 # Variables: 20
@@ -677,6 +677,40 @@ Via join with mapdata
 # $ latitude    <chr> "10.9224", "11.2249", "23.0523", "20.625", "25.6853", "27.5709", "21.8044"...
 # $ woe-label   <chr> "Puducherry, IN, India", "Lakshadweep, IN, India", "West Bengal, IN, India...
 # $ type        <chr> "Union Territor", "Union Territor", "State", "State", "State", "State", "S...
+ 
+DT1 <- setDT(mydat)[, c("lon", "lat"), with = FALSE] %>%
+  .[lon>60&lon<90] %>%
+  .[lat>5&lat<30] %>%
+  unique(., by = c('lon','lat')) 
+
+DT2 <- setDT(mapdata)[, c("longitude", "latitude", "hc-a2"), with = FALSE] %>%
+  .[, c("longitude","latitude"):=lapply(.SD, as.numeric), .SDcol=c("longitude","latitude")]
+colnames(DT2) <- c("lon","lat", "hca2")
+
+# checking the uniqueness
+# DT1[,.N,c("lon","lat")][N>1L]
+# DT2[,.N,c("longitude","latitude")][N>1L]
+
+# Turns out joining on nearest value based on two column isn't trivial,  
+# I have adapted a fuction from stackoverflow
+# https://stackoverflow.com/questions/28435126/merge-data-table-by-two-nearest-variables?noredirect=1&lq=1
+func = function(u,v)
+{
+    vec = with(DT2, (u-lon)^2 + (v-lat)^2)
+    DT2[which.min(vec),]$hca2
+}
+
+t.join.data <- transform(DT1, 'hc-a2'=apply(DT1, 1, function(u) func(u[[1]], u[[2]]))) %>%
+  .[mydat, on=.(lon,lat)] %>%
+  .[!is.na('hc-a2'), value:=sum(N), by="hc-a2"] %>%
+  unique(., by = c('hc-a2')) %>%
+  .[lon>60&lon<90] %>%
+  .[lat>5&lat<30]
+
+# hcmap("countries/in/in-all", data = t.join.data, value = "value",
+#       joinBy = c("hc-a2", "hc-a2"), name = "Number of job listing",
+#       dataLabels = list(enabled = TRUE, format = '{point.name}'), borderWidth = 1,
+#       tooltip = list(valueDecimals = 0, valuePrefix = "", valueSuffix = "")) 
 ```
 Sadly I dont see an easy way to join the mapdata inforamtion together with the job listing information to provide state/region level information. i guess the likes of Mumbai, Bengaluru, Bangalore etc are actually cities name.
 
@@ -696,7 +730,7 @@ I resort to plotting them with the geocoded latitude and longitude with highchar
 hcmap("countries/in/in-all", name = "India") %>% 
   hc_add_series(data = highcharter.plot, type = "mapbubble",
                 name = "Job listing", maxSize = "35") %>% 
-  hc_title(text = "Locations of Job Posting") %>% 
+    hc_title(text = "Locations of Job Posting") %>% 
   hc_subtitle(text = "only top 100 locations are included, the counts also include duplicates if the job is listed at multiple location") %>%
   hc_mapNavigation(enabled = TRUE) 
 
@@ -704,16 +738,15 @@ hcmap("countries/in/in-all", name = "India") %>%
 
 ## Job description
 
-Example output of jobs description column
+Output of jobs description column
 
 ```{r}
 head(mdt$jobdescription, 1)
 ```
 
-It seems this is not very well formated. Some of the useful information such as payrate and indsutry is also already extracted into individual column by pre-crawler. Still, it would be interesting to see if we can indentify additional useful information for job description.
+It seems this column data is not well formated. Some of the useful information such as payrate and indsutry is also already extracted into individual column by pre-crawler. Still, it would be interesting to see if we can indentify additional useful information for job description with some basic NLP processes.
 
-It seems every job description begins with  "Job Description Â  Send me Jobs like this". This word structure should be removed before any further comparison
-
+It seems every job description begins with  "Job Description Â  Send me Jobs like this". This particular string will be removed before anyany processes.
 
 
 ```{r}
@@ -874,9 +907,9 @@ hcboxplot(x = mdt$m.payrate.Mean,
   hc_title(text = "Plot of Payrate(Mean, PA) vs Industry") 
 ```
 
-If we were to ignore the outliers (which would be heavily influenced by the amount of job listing in that particular industry), it seems that "Iron and Steel" , "IT-Software" and "Strategy/Management consulting Firm" command the best payrate. Although, "Pulp and Paper"  surprisingly also seems like one of the better paying industry.
+If we were to ignore the outliers and raw data (which would be heavily influenced by the amount of job listing in that particular industry), it seems that "Iron and Steel", "Pulp and Paper", "IT-Software" and "Strategy/Management consulting Firm" command the best payrate.
 
-Though it would be a grave mistake if we conclude straight away that that Pul and Paper are the best industry (Paywise) to work in, as this ignore other factors such as number of data as well as requirement in experience.
+Although, one would be mistaken to conclude straight away that that "Pul and Paper" and the likes are the best industry (Pay wise) to work in, as this ignore other factors such as number of job listing/payrate recorded, as well other not specifed requirement.
 
 The table below listed the Median Pay of listing by different industries.
 
@@ -889,11 +922,10 @@ mdt[!is.na(m.payrate.Mean),.(.N,
   .[, head(.SD, 30),] 
 ```
 
-Evidently, Pulp and Paper only have two entries, thus it's pay scale is likely heavily skrewed. The high PayScale might be only reserved for c-level employee. 
+Evidently, "Pulp and Paper" current payrate data is derived from only two job listing, thus it's pay scale is likely heavily skrewed; The abonormally high PayScale might be reserved for c-level employee. 
+Also, we have zero clue with regards of how the data (which is a subset of the actual listing) scale when the full database are considered. Regardless, it is probably safe to assume that the current datasets are a random subset of the actual full datasets. Hence, having more listing of jobs in a particular industry would probably portray a clearer picture with regards to pay.
 
-Also, we have zero clue with regards of how the data (which is a subset of the actual listing) scale when all the data are considered. Regardless, having more listing of job in an industry would probably portray a clearer picture with regards the to pay.
-
-Thus, if we restrict our boxplot to industry with more than 20 listing.
+Thus, if we were to restrict our boxplot to industry with more than 30 listing.
 
 ```{r}
 t.filtered.mdt <- mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]
@@ -903,6 +935,10 @@ t.filtered.mdt <- mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]
   hc_chart(type = "column") %>% 
   hc_title(text = "Plot of Payrate(Mean, PA) vs Industry") 
 ```
+
+The clear winners are "IT - Sofreware", "Internet" and "Strategy/Management consulting Firm".
+
+In the form of table:
 
 ```{r}
 mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]%>%
@@ -925,13 +961,9 @@ mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]%>%
   .[, tail(.SD, 10),]
 ```
 
-Some industries payrate are rather pathetic - both the median of the industry and the range ( Q3-Q1) is low, the latitude ( or margin) to growth in those industry would be restricted. This is exemplify by "BPO/Call Centre", "Recruitment/Staffing", "Teaching/Training" and "Healthcare". 
+On the end of tial,  some of the industries's pay are pathetic - both the median of the industry and the range ( Q3-Q1) is fairly minute. This probably shows both the starting pay and the latitude/margin to growth in these industry are limited. This is exemplify by "BPO/Call Centre", "Recruitment/Staffing", "Teaching/Training" and "Healthcare". 
 
-This is a little at odds with the market based "demand", as  "Call Centre", "Education", "Hospital" are industry that posted most job on the database.
-
-
-
-
+Also, it is interesting to note that some of the low paying industry - "Call Centre", "Education", "Hospital" are industries that posted most job on the database for the duration of the data subset.
 
 ```{r}
 hcboxplot(x = mdt$m.payrate.Mean, 
@@ -953,7 +985,7 @@ tempt_ggplot <- filtered.IMP %>%
           glance(lm(m.experience.Median~m.payrate.Mean, filtered.IMP))$adj.r.squared,
                3)), parse = TRUE)
 ggplotly(tempt_ggplot) %>%
-  layout(title = 'Payrate) vs Experience',
+  layout(title = 'Payrate vs Experience',
          xaxis = list(title = 'Experience (years)[range]', tickangle = 90),
          yaxis = list(title = 'Annual Payrate'))
 
@@ -1034,9 +1066,9 @@ hcboxplot(x = mdt.melt.Education$m.payrate.Mean,
   hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education")
 ```
 
-It seems that the level of education for fresh gradautes and people with up to 3 years worth of working experience does not resulted in a significant difference in payrate (ignoring outliers).
+It seems that the level of education for fresh gradautes and people with up to 3 years worth of working experience does not resulted in a significant difference in payrate (ignoring outliers). owever, the difference in payscale of them may not appear significant when compare to other groups due to differences in magnitudes (y-axis).
 
-On the next plot, the salary differences for poeple with little to no experience would be examined solely, as the difference in payscale may not appear significant when compare to other groups due to differences in magnitudes (y-axis).
+On the next plot, the salary differences for poeple with little to no experience would be examined.
 
 ```{r}
 # Filtering to plot for only those jobs that listed 0 to 3 job experience.
@@ -1045,11 +1077,15 @@ hcboxplot(x = mdt.melt.Education[m.experience.Cut=="[0,3)"]$m.payrate.Mean,
           name = "Length", color = "#2980b9") 
 ```
 
-The previous plots counts multiple of job listing when a job listed degree(UG), diploma as applicable to the requirement. This in effect would lower the actual differences
+It is possible that some of the job listings that depicted no experience requirement are in fact posts that required significant amount of working experience. The extracted experience requirement may not be able to capture the exact requirement if it is not listed explicitly.
 
-However, in real life (which means the current employer market), when the number of application are high, employer would normally favor those with advance degree (of cause experience still matter). 
+#### Alternative accounting of Education
 
-Not to mention even for employee, given a choice, few would be willing to underemploy/undersell themselves for position require lower level of education.
+The previous sections considers a job that listed multiple education requirement as multiple of job listing, Ie a job listed to be application to degree holder (UG), diploma, and PG would be melted into multiple entries for each level of education.
+
+This, in effect, would lower the actual differences of payrates between different level of education. In actual market (which means the current employer market), those with advance degree are generally heavily favoured (not to say experience doesnt matter) while those with lower level of education would find it hard to compete.
+
+Few employees, given a choice, would be willing to underemploy/undersell themselves for position that requires lower level of education or gives a loewr payrate.
 
 ```{r}
 hcboxplot(x = mdt$m.payrate.Mean, 
@@ -1062,9 +1098,9 @@ hcboxplot(x = mdt$m.payrate.Mean,
 #   .[,med.pay:=median(m.payrate.Mean), by =c("m.Education.factor", "m.experience.Cut") ]
 ```
 
-Overall, it is quite obvious that assigning the in single highest education requirement to individual job listing yield a much greater difference in payrate, I would think this is more accurate in reflecting the job market. This perhaps only fails when the demand of that particular expertise/industry for personal is very high.
+Overall, it is quite obvious that assigning solely the single highest education requirement to individual job listing yield a much greater difference in their pay. I think this is a more accurate picture in reflecting the job market. 
 
-#### With regards to Industry 
+### With regards to Industry 
 
 ```{r}
 
@@ -1079,16 +1115,34 @@ Overall, it is quite obvious that assigning the in single highest education requ
 # 
 # (colnames(mdt) %in% industry_cout_table_40$industry)
 
+unique(mdt$industry)
 
+# limited the plotting to industry with more than 100 listing
+t.filtered.mdt <- mdt[!is.na(m.payrate.Mean), if (.N > 150) .SD, by = industry] %>%
+  droplevels(.)
 
-hcboxplot(x = mdt$m.payrate.Mean, 
-          var = mdt$m.experience.Cut, 
-          var2 = mdt$industry,
+hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
+          var = t.filtered.mdt$m.experience.Cut, 
+          var2 = t.filtered.mdt$industry,
           outliers = FALSE) %>% 
   hc_chart(type = "column") %>%
   hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education")
 ```
 
+
+
+```{r}
+# limited the plotting to industry with more than 100 listing
+t.filtered.mdt <- mdt[!is.na(m.payrate.Mean), if (.N > 110 & .N<150) .SD, by = industry] %>%
+  droplevels(.)
+
+hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
+          var = t.filtered.mdt$m.experience.Cut, 
+          var2 = t.filtered.mdt$industry,
+          outliers = FALSE) %>% 
+  hc_chart(type = "column") %>%
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education")
+```
 
 ```{r}
 
@@ -1115,25 +1169,9 @@ Since we have most abundant data for the listing of jobs for "IT - Software / So
 
 #### IT - Software / Software services
 
+
+
 ```{r}
-# # Removing some unnesssary columns
-# mdt.melt.location[ ,`:=`(variable = NULL, payrate.M = NULL, jobid = NULL,
-#                          jobdescription = NULL, experience = NULL, 
-#                          company = NULL, education = NULL,
-#                          experience.M = NULL, postdate = NULL,
-#                          payrate = NULL, uniq_id = NULL)]
-# setnames(mdt.melt.location, "value", "location")
-
-# melting for education , this would create duplicate job posting for difference level of education
-mdt.melt.location.Education <- melt(mdt.melt.location, 
-     measure.vars = patterns ("^m.Education.tf."), na.rm = T, variable.name = "EducationLevel") 
-mdt.melt.location.Education$value <- NULL 
-
-mdt.melt.location.Education <- mdt.melt.location.Education %>%
-  .[!is.na(m.payrate.Mean)|industry=="IT-Software / Software Services",]
-  
-colnames(mdt.melt.location)
-
 ## Time of posting
 # fitering for only data with valid payrate data and IT software industry
 mdt.melt.location %>%
@@ -1144,56 +1182,313 @@ mdt.melt.location %>%
   add_axis("x", properties = axis_props(
     labels = list(angle = 45, align = "left", fontSize = 10)
   ))
-
-mdt.melt.location %>%
-  .[!is.na(m.payrate.Mean)&industry=="IT-Software / Software Services",] %>%
-  .[, .(.N, Payratemedian=median(m.payrate.Mean), 
-        Q1=quantile(m.payrate.Mean, 0.25),
-        Q3=quantile(m.payrate.Mean, 0.75)), by = m.i.location] %>%
-  .[order(-N)]
-
-
-
-mdt.melt.location %>%
-  .[!is.na(m.payrate.Mean)&industry=="IT-Software / Software Services",] %>%
-  .[, .(.N, Payratemedian=median(m.payrate.Mean), 
-        Q1=quantile(m.payrate.Mean, 0.25),
-        Q3=quantile(m.payrate.Mean, 0.75)), by = .(m.experience.Cut,  m.Education.factor, m.i.location)] %>%
-  .[order(-N)]
-
-
-mapdata <- get_data_from_map(download_map_data("countries/in/in-all"))
-glimpse(mapdata)
-mapdata$latitude
-mapdata$(longitude)
-mydat$lat
-
-key<-setDT(mapdata)[, c("longitude", "latitude", "hc-a2"), with = FALSE]
-key
-setkey
-
-mapdata$`hc-a2`
-# dt[J(x), roll="nearest"]
-dt[J(x), roll="nearest"]
-
-data.table
-
-# formula = m.payrate.Mean ~ m.Education.UG + m.Education.tf.UG + m.Education.tf.PG + m.Education.tf.MBA + value + Fare + Embarked
 ```
 
 ```{r}
-# Fit lm model using 5 x 5-fold CV: model
-model <- train(
-  m.payrate.Mean ~ m.experience.Median + EducationLevel, 
-  mdt.melt.location.Education,
-  method = "rpart", na.action = na.omit,
-  trControl = trainControl(
-    method = "cv", number = 5, verboseIter = TRUE
-  )
-)
+# # melting for education , this would create duplicate job posting for difference level of education
+# mdt.melt.location.Education <- melt(mdt.melt.location, 
+#      measure.vars = patterns ("^m.Education.tf."), na.rm = T, variable.name = "EducationLevel") 
+# mdt.melt.location.Education$value <- NULL 
+# 
+# mdt.melt.location.Education <- mdt.melt.location.Education %>%
+#   .[!is.na(m.payrate.Mean)|industry=="IT-Software / Software Services",]
+#   
+# colnames(mdt.melt.location)
 
-# Print model to console
-model
+t.filtered.mdt<- mdt %>%
+  .[!is.na(m.payrate.Mean)&industry=="IT-Software / Software Services"] 
+
+# depiciting only the highest educational level per job listing
+hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
+          var = t.filtered.mdt$m.experience.Cut, 
+          var2 = t.filtered.mdt$m.Education.factor, 
+          outliers = FALSE) %>% 
+  hc_chart(type = "column") %>%
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education")
+
+
+
+## Highcharter plot to depict the location of job posting on map
+highcharter.plot <- mdt.melt.location %>%
+  .[!is.na(m.payrate.Mean)&industry=="IT-Software / Software Services",] %>%
+  .[, .(.N, Paymedian=median(m.payrate.Mean), 
+        Q1=quantile(m.payrate.Mean, 0.25),
+        Q3=quantile(m.payrate.Mean, 0.75)), by = m.i.location] %>%
+  .[order(-N)] %>%
+  .[!is.na(m.i.location)] %>%
+  .[mydat, on="m.i.location"]%>%
+  .[lon>60&lon<90] %>%
+  .[lat>5&lat<30] %>%
+  .[,`:=`(
+           name=m.i.location,
+           z=N,
+           color= colorize(Paymedian)
+           )] 
+  
+## highcharter
+hcmap("countries/in/in-all", name = "India") %>% 
+  hc_add_series(data = highcharter.plot, type = "mapbubble",
+                name = "Job listing", maxSize = "25") %>% 
+    hc_title(text = "Locations of Job Posting for IT Software") %>% 
+  hc_subtitle(text = "only top 100 locations are included, the calculation allowed multiple entries if the job is listed at multiple location") %>%
+hc_tooltip(useHTML = TRUE,
+             headerFormat = "<table>",
+             pointFormat = paste("<tr><th colspan=\"1\">N Job Listing<td>{point.z}</td></th></tr>",
+                                 "<tr><th>Location Name</th><td>{point.name} </td></tr>",
+                                 "<tr><th>Pay Median</th><td>{point.Paymedian} </td></tr>",
+                                 "<tr><th>Pay Q1</th><td>{point.Q1} </td></tr>",
+                                 "<tr><th>Pay Q3</th><td>{point.Q3} </td></tr>"),
+             footerFormat = "</table>")
+
+```
+
+##### growth
+```{r}
+# # Fit lm model using 5 x 5-fold CV: model
+# model <- train(
+#   m.payrate.Mean ~ m.experience.Median + EducationLevel, 
+#   mdt.melt.location.Education,
+#   method = "rpart", na.action = na.omit,
+#   trControl = trainControl(
+#     method = "cv", number = 5, verboseIter = TRUE
+#   )
+# )
+# 
+# # Print model to console
+# model
+```
+
+```{r}
+# depiciting only the highest educational level per job listing
+hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
+          var = t.filtered.mdt$m.experience.Cut, 
+          var2 = t.filtered.mdt$m.Education.factor, 
+          outliers = FALSE) %>% 
+  hc_chart(type = "column") %>%
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education")%>%
+  hc_tooltip(useHTML = TRUE,
+             headerFormat = "<table>",
+             pointFormat = paste("<tr><th colspan=\"1\">N Job Listing<td>{point.z}</td></th></tr>",
+                                 "<tr><th>Location Name</th><td>{point.name} </td></tr>",
+                                 "<tr><th>Pay Median</th><td>{point.Paymedian} </td></tr>",
+                                 "<tr><th>Pay Q1</th><td>{point.Q1} </td></tr>",
+                                 "<tr><th>Pay Q3</th><td>{point.Q3} </td></tr>"),
+             footerFormat = "</table>")
+```
+
+
+#### Healtcare
+
+```{r}
+## Time of posting
+# fitering for only data with valid payrate data and IT software industry
+mdt %>%
+  .[!is.na(m.payrate.Mean)&industry=="Medical / Healthcare / Hospitals"] %>%
+  .[!is.na(m.timeCut), .N, by=m.timeCut] %>%
+  ggvis(~m.timeCut, ~N) %>%
+  layer_bars(fillOpacity := 0.1) %>%
+  add_axis("x", properties = axis_props(
+    labels = list(angle = 45, align = "left", fontSize = 10)
+  ))
+```
+
+This may yield false information as the trends may be results of data subseting, though, it certainly shows that most of the job listing for healthcare occured around May, March for 2016.
+
+```{r}
+## Highcharter plot to depict the location of job posting on map
+highcharter.plot <- mdt.melt.location %>%
+  .[!is.na(m.payrate.Mean)&industry=="Medical / Healthcare / Hospitals",] %>%
+  .[, .(.N, Paymedian=median(m.payrate.Mean), 
+        Q1=quantile(m.payrate.Mean, 0.25),
+        Q3=quantile(m.payrate.Mean, 0.75)), by = m.i.location] %>%
+  .[order(-N)] %>%
+  .[!is.na(m.i.location)] %>%
+  .[mydat, on="m.i.location"]%>%
+  .[lon>60&lon<90] %>%
+  .[lat>5&lat<30] %>%
+  .[,`:=`(
+           name=m.i.location,
+           z=N,
+           color= colorize(Paymedian)
+           )] 
+  
+# Highcharter
+hcmap("countries/in/in-all", name = "India") %>% 
+  hc_add_series(data = highcharter.plot, type = "mapbubble",
+                name = "Job listing", maxSize = "25") %>% 
+    hc_title(text = "Locations of Job Posting for Healthcare") %>% 
+  hc_subtitle(text = "only top 100 locations are included, the calculation allowed multiple entries if the job is listed at multiple location") %>%
+hc_tooltip(useHTML = TRUE,
+             headerFormat = "<table>",
+             pointFormat = paste("<tr><th colspan=\"1\">N Job Listing<td>{point.z}</td></th></tr>",
+                                 "<tr><th>Location Name</th><td>{point.name} </td></tr>",
+                                 "<tr><th>Pay Median</th><td>{point.Paymedian} </td></tr>",
+                                 "<tr><th>Pay Q1</th><td>{point.Q1} </td></tr>",
+                                 "<tr><th>Pay Q3</th><td>{point.Q3} </td></tr>"),
+             footerFormat = "</table>")
+
+```
+
+##### growth
+
+```{r}
+t.filtered.mdt<-mdt %>%
+  .[!is.na(m.payrate.Mean)&industry=="Medical / Healthcare / Hospitals"] 
+
+hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
+          var = t.filtered.mdt$m.experience.Cut, 
+          var2 = t.filtered.mdt$m.Education.factor,
+          outliers = FALSE) %>% 
+  hc_chart(type = "column") %>%
+  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education") %>%
+  hc_subtitle(text = "the extra series is allocated for job listing with no clear education requirement")
 ```
 
 #### Location difference
+```{r}
+require(leaflet)
+```
+
+```{r}
+
+software.icons <- awesomeIcons(
+  icon = 'fa-github',
+  library = 'fa'
+)
+internet.icons <- awesomeIcons(
+  icon = 'fa-internet-explorer',
+  library = 'fa'
+)
+bank.icon <- awesomeIcons(
+  icon = 'fa-institution',
+  library = 'fa'
+)
+factory.icon <- awesomeIcons(
+  icon = '	fa-industry',
+  library = 'fa'
+)
+recruit.icon <- awesomeIcons(
+  icon = 'fa-handshake-o',
+  library = 'fa'
+)
+hospital.icon <- awesomeIcons(
+  icon = 'fa-h-square ',
+  library = 'fa'
+)
+pharma.icon <- awesomeIcons(
+  icon = 'fa-medkit',
+  library = 'fa'
+)
+phone.icon <- awesomeIcons(
+  icon = 'fa-phone',
+  library = 'fa'
+)
+
+# join mdt.melt.locaiont ( which duplicates for location ) with geocoded address(mydat)
+combined<- mdt.melt.location[,if(.N>1000).SD, by=industry] %>%
+  .[,if(.N>200).N, by=.(industry, m.i.location)] %>%
+  .[mydat, on="m.i.location"] %>%
+  .[!is.na(industry)] %>%
+  .[lon>60&lon<90] %>%
+  .[lat>5&lat<30]%>%
+  droplevels(.) 
+
+list_industry<-unique(combined$industry)
+
+
+individual_listing <- mdt.melt.location[, .(industry, m.i.location)] %>%
+  .[industry %in% list_industry] %>%
+  .[mydat, on="m.i.location"] %>%
+  .[!is.na(lon)|!is.na(lat)]%>%
+  .[lon>60&lon<90] %>%
+  .[lat>5&lat<30]%>%
+    droplevels(.)
+
+individual_listing[industry=="IT-Software / Software Services"]
+```
+```{r}
+leaflet(individual_listing) %>% addTiles() %>%
+  addProviderTiles(providers$CartoDB.Positron)%>%
+  #overlay groups
+# addAwesomeMarkers(~lon, ~lat, icon=hospital.icon, label=~industry,
+#                   data =individual_listing[industry=="Medical / Healthcare / Hospitals"],
+#                   clusterOptions = T, group ="Healthcare") %>%
+# addAwesomeMarkers(~lon, ~lat, icon=software.icons, label=~as.character(industry),
+#                   data =individual_listing[industry=="IT-Software / Software Services"],
+#                   clusterOptions = T, group = "IT") %>%
+# addAwesomeMarkers(~lon, ~lat, icon=phone.icon, label=~as.character(industry),
+#                   data =individual_listing[industry=="BPO / Call Centre / ITES"],
+#                   clusterOptions = T, group ="Call Centre")  %>%
+# addAwesomeMarkers(~lon, ~lat, icon=bank.icon, label=~as.character(industry),
+#                   data =individual_listing[industry=="Strategy / Management Consulting Firms"],
+#                   clusterOptions = T, group = "Strategy") %>%
+# addAwesomeMarkers(~lon, ~lat, icon=recruit.icon, label=~as.character(industry),
+#                   data =individual_listing[industry=="Recruitment / Staffing"],
+#                   clusterOptions = T, group = "Recruit") %>%
+addCircles(~lon, ~lat, stroke = F, group = "recruit",
+           data =individual_listing[industry=="IT-Software / Software Services"] ) %>%
+  # Layers control
+  addLayersControl(
+    overlayGroups = c("Medical", "IT", "Call Centre", "Strategy", "Recruit"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+individual_listing[industry=="IT-Software / Software Services"]
+individual_listing[industry=="Medical / Healthcare / Hospitals"]
+unique(individual_listing$industry)
+```
+
+```{r}
+leaflet(individual_listing) %>% addTiles() %>%  
+  addProviderTiles(providers$CartoDB.Positron)%>%
+   #overlay groups
+addCircleMarkers(~lon, ~lat, popup=~industry,
+                  data =individual_listing[industry=="IT-Software / Software Services"],
+                  clusterOptions = T, group ="IT") %>%
+addCircleMarkers(~lon, ~lat, popup=~industry,
+                  data =individual_listing[industry=="Recruitment / Staffing"],
+                  clusterOptions = T, group ="Recruit") %>%
+addCircleMarkers(~lon, ~lat, popup=~industry,
+                  data =individual_listing[industry=="Banking / Financial Services / Broking"],
+                  clusterOptions = T, group ="Bank") %>%
+addCircleMarkers(~lon, ~lat, popup=~industry,
+                  data =individual_listing[industry==list_industry[[4]]],
+                  clusterOptions = T, group ="Internet") %>%
+addCircleMarkers(~lon, ~lat, popup=~industry,
+                  data =individual_listing[industry==list_industry[[5]]],
+                  clusterOptions = T, group ="Pharma") %>%
+  # Layers control
+  addLayersControl(
+    overlayGroups = c("IT", "Recruit", "Bank", "Internet", "Pharma"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+```{r}
+# pal <- colorFactor("viridis", domain = unique(combined$industry))
+
+leaflet(individual_listing) %>% addTiles() %>%  
+  addProviderTiles(providers$CartoDB.Positron)%>%
+  addCircleMarkers(lng = ~jitter(lon), lat = ~jitter(lat), weight = 10,
+    # radius = ~V1*10,
+    # color = ~pal(industry),
+    stroke = FALSE, fillOpacity = 0.5,
+    popup = ~industry,
+    clusterOptions = markerClusterOptions()
+      )%>%
+  addLegend("bottomright", pal = pal, values = ~industry,
+    title = "Industry",
+    opacity = 1
+  )
+
+leaflet(combined) %>% addTiles() %>%  
+  addProviderTiles(providers$CartoDB.Positron)%>%
+  addCircles(lng = ~lon, lat = ~lat, weight = 10,
+    radius = ~N*10,
+    color = ~pal(industry), 
+    popup = ~m.i.location
+  )
+
+
+```
+
+
