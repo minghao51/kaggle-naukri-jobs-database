@@ -1398,6 +1398,7 @@ list_industry<-unique(combined$industry)
 
 individual_listing <- mdt.melt.location[, .(industry, m.i.location)] %>%
   .[industry %in% list_industry] %>%
+  .[,.N, by=c("industry", "m.i.location")]%>%
   .[mydat, on="m.i.location"] %>%
   .[!is.na(lon)|!is.na(lat)]%>%
   .[lon>60&lon<90] %>%
@@ -1406,6 +1407,7 @@ individual_listing <- mdt.melt.location[, .(industry, m.i.location)] %>%
 
 individual_listing[industry=="IT-Software / Software Services"]
 ```
+
 ```{r}
 leaflet(individual_listing) %>% addTiles() %>%
   addProviderTiles(providers$CartoDB.Positron)%>%
@@ -1464,28 +1466,33 @@ addCircleMarkers(~lon, ~lat, popup=~industry,
 ```
 
 ```{r}
-# pal <- colorFactor("viridis", domain = unique(combined$industry))
+pal <- colorFactor("viridis", domain = unique(individual_listing$industry))
 
 leaflet(individual_listing) %>% addTiles() %>%  
   addProviderTiles(providers$CartoDB.Positron)%>%
   addCircleMarkers(lng = ~jitter(lon), lat = ~jitter(lat), weight = 10,
     # radius = ~V1*10,
-    # color = ~pal(industry),
-    stroke = FALSE, fillOpacity = 0.5,
-    popup = ~industry,
-    clusterOptions = markerClusterOptions()
+    color = ~pal(industry),
+    stroke = FALSE, fillOpacity = 0.3,
+    popup = ~industry
+    label = paste(LIBGEO , " | " , as.character(counts) , " employees" , sep ="" )
+    # clusterOptions = markerClusterOptions()
       )%>%
   addLegend("bottomright", pal = pal, values = ~industry,
     title = "Industry",
     opacity = 1
   )
 
-leaflet(combined) %>% addTiles() %>%  
+leaflet(individual_listing) %>% addTiles() %>%  
   addProviderTiles(providers$CartoDB.Positron)%>%
   addCircles(lng = ~lon, lat = ~lat, weight = 10,
     radius = ~N*10,
     color = ~pal(industry), 
     popup = ~m.i.location
+  )%>%
+  addLegend("bottomright", pal = pal, values = ~industry,
+    title = "Industry",
+    opacity = 1
   )
 
 
