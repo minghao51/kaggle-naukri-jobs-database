@@ -8,13 +8,14 @@ output:
     toc_depth: 2
     toc_float: true
     df_print: tibble
+    code_folding: hide
 ---
 
 # Intro
 
-The dataset is given on the context that this is a pre-crawled dataset, taken as subset of a bigger dataset that was created by extracting data from Naukri.com, a leading job board.
+The dataset is given on the context that this is a pre-crawled dataset, taken as subset of a bigger dataset that was created by extracting data from Naukri.com, which looks to be a leading job board in India.
 
-sadly it is not known how the data were subseted, whether analysising this data would give a breif overview with regards to job market over a period of time or certain industry. 
+sadly it is not known how the data were subseted, whether how trends in this data sets would translate to actual trends in actual job market, though we can always speculate. 
 
 
 # libraries
@@ -38,74 +39,163 @@ inputdt <- as.data.table(read.csv(file="naukri_com-job_sample.csv", strip.white 
                              na.strings=c("","NA","Not Mentioned","Not Disclosed by Recruiter"), 
                              stringsAsFactors = FALSE))
 
+#create a duplicate of inputdt for modification
+mdt <- inputdt
+
 # setting "Not mentioned" as NA for experience etc.
 # setting "Not Disclosed by Recruiter" that is the norm for NA in payrate
-
 ```
+
+I have set rmarkdown to  hide the code by default, so that everyone can glimpse whatever analysis/exploration thereis without running into a wall of text. One can easily shown the code if it appears interesting.
+
+
+# Questions
+
+1. How particular industry or experience influence the disclosure of salary.
+
+2.
+
 
 # Data Exploration & Basic Analysis
 This section seems to clean and organise the input data, while also investigate its basic quality/distribution.
 
 ```{r}
-glimpse(inputdt)
+glimpse(mdt)
 ```
 
-## site_name
+Subsections below are exploration of particular column. The purpose of some of the columns aren't clear defined and explained, while others require prepocessing before going futher with exploration.
+
+
+
+## Number of Missing data
 
 ```{r}
-summary(as.factor(inputdt$site_name))
-inputdt$site_name <- NULL
+NA_rows_numbers<-sapply(mdt, function(x) sum(is.na(x)))
+Valid_rows_numbers<-sapply(mdt, function(x) sum(!is.na(x)))
+data.table(names(NA_rows_numbers), NA_rows_numbers, Valid_rows_numbers)
 ```
-Well, it seems like the site name is pretty filled with either naukri or NA data. This column could probably be removed without influencing the subsequent data analysis.
+The amount of field with inputs and NA with respective column can be observed here. Sadly, probably the most interesting aspect (pay) is mostly empty. Though perhaps we can examine later is how common and prevalence is this practice.
 
-## uniq_id
+
+## Site_name
 
 ```{r}
-uniqueN(inputdt$uniq_id)
+## summary(as.factor(inputdt$site_name))
+# www.naukri.com           NA's 
+#           3987          18013 
+mdt$site_name <- NULL
 ```
 
-This Would be useful as an unique identifier for individual job listing.
+ **site_name** is filled with either www.naukri or empty fill. This column is removed as it would have little effect on subsequent data analysis/exploration. This column shall be discarded.
+
+## Uniq_id
+
+```{r}
+## uniqueN(inputdt$uniq_id)
+# [1] 22000
+head(mdt$uniq_id,2)
+```
+
+This Would be useful as an unique identifier for individual job listing. As it's a corresponding long string that is unique to each individual job listing.
 
 ## Jobid
 
 ```{r}
-uniqueN(inputdt, by=c("jobid"))
+## uniqueN(inputdt, by=c("jobid"))
+# [1] 21910
+head(mdt$jobid,2)
 ```
 
-It is not exactly clear how "jobid" is structed, perhaps it accounts of relisting of jobs? 
-
-Although, since the number of unique jobid is only differing from uniq_id by 90, if the purpose where to depict the relisting of respective jobs, it probably did not do its job very well.
+It is not exactly clear how "jobid" is structed, yet there are 21910 ( just slightly less than uniq_id's row number) unique instances of jobid. As this number is only slightly less than that of "unique_id", I am guessing it might be capturing the relisting of certain jobs, this wil be explored in later sections.
 
 
 ## Payrate
 
+Here comes the interesting part, Salary. 
+
+
+
 ```{r}
-# Seeing that payrate listing would corresponds to format of "1,50,000 - 2,50,000 P.A"
-# I would just use gsub to remove strings after P.A
-inputdt$payrate.M<-gsub( " P.A.*$", "", inputdt$payrate)
-# this is essential to remove numerical characters after the P.A string
-# this also removed certain listed incentive/commission information in payrate
-
-# stripping all the non numerical chr from the payrate
-inputdt$payrate.M<-gsub("[^0-9-]", "", inputdt$payrate.M)
-# inputdt$m.payrate<-gsub("[^0-9,-,-]", "", inputdt$m.payrate)
-
-# Outliers
-# Example of some payrate that is not extracated properly ( with 2 "-" etc after regexp treatment), 
-# seeing there is no easy solution and that there is only ~200 of them, them will be ignored for now
-inputdt[lengths(strsplit(inputdt$payrate.M, "-"))>2, list(payrate,payrate.M),]
+#printing the head of of non NA column for payrate
+head(mdt[!is.na(mdt$payrate)]$payrate, 15)
 ```
 
-COuld potentially improve the regular expresssion by extracting only numbers between the dashes, but that would require more work with regeexp, going to put it off for now.
 
-Splitting the payrate column while conditionally ignoring those that have more than dash ("-") symbol.
+Though,it doesn't appear to be very well structured judging from the sample output of this column
+
+
+I choosed to processed this column by:
+
+1. Extract the string before "P.A". This mean that incentives/ joining bonus that is typically listed after salary P.A ( Per Annum) are ignored, not that there is any solid to pull from them.
+
+2. Removing some of the values that is listed as per hour
+
+3. Extract only numeric values in  the "X-Y" range 
+
+
+
+```{r}
+## 1. Extract the string before "P.A".
+# Seeing that payrate listing would corresponds to format of "1,50,000 - 2,50,000 P.A"
+# I would just use gsub to extract strings before P.A
+mdt$payrate.M<-gsub( " P.A.*$", "", mdt$payrate)
+# this is essential to remove numerical characters after the P.A string
+# this also removed certain listed incentive/commission information in payrate
+# some values are exceedingly low (relatively to one another, but it doesn't seems like the values it is recorded in monthly compensation format either.
+
+## 2. Removing some of the values that is listed as per hour
+mdt[str_detect(payrate.M,"per hour"), payrate.M := NA]
+
+## 3. Extract only numeric values in  the "X-Y" range 
+# stripping all the non numerical chr from the payrate
+mdt$payrate.M<-gsub("[^0-9-]", "", mdt$payrate.M)
+# mdt$m.payrate<-gsub("[^0-9,-,-]", "", mdt$m.payrate)
+
+```
+
+
+Some of the payrate that isn't formated. The string field has more than one dasg.  the same way are listing their P.A compensation in bracket instead
+
+Strangely it seems like some values here in this particular payrate listing is listed as "I" instead of "1". I am not sure if this is the result of input error from recruiter or the crawler that generated this datasets. Anyhow, this need to be corrected.
+
+```{r}
+# Example of some payrate that is not extracated properly ( with 2 "-" etc after regexp treatment), 
+# seeing there is no easy solution and that there is only ~200 of them, them will be ignored for now
+mdt[lengths(strsplit(mdt$payrate.M, "-"))>2, list(payrate,payrate.M),]
+
+
+mdt[lengths(strsplit(mdt$payrate.M, "-"))>2, payrate.M:=str_extract(payrate, "(?<=\\(Rs.)(.*?)(?=\\))")]
+# RegExp Explanation
+#(?<=\\(Rs.) escape and extract strings after (Rs.
+#(.*?) strings within with wildcard
+#(?=\\))") escape and extract strings before ) payrate.M:=
+
+# Correction for special case where "1" is recorded as "I"
+mdt[substr(mdt$payrate.M,1,5)=="I5600",payrate.M:="15600-39100"]
+#Pay Scale: PB-3 (Rs.I5600-39100) with AGP of Rs.8000/- p.m.
+
+
+```
+
+With all the preprocessing above, we currently have:
+
+```{r}
+# Removing some empty string introduced in the preprocessing process.
+mdt[payrate.M=="", payrate.M:= NA]
+
+# # Number of valid rows in payrate
+# sum(!is.na(mdt$payrate.M))
+# [1] 5270
+```
+
+Splitting the payrate columns that have been properly formated so far, create two column that is indicative of the low and high range of the compensation. Then, create a column **m.payrate.Mean** as to recorded the mean of the offered compensation based on the range.
 
 ```{r}
 # Identifying the appropriate number of splits for payrate with str "-"
-splits <- max(lengths(strsplit(inputdt$payrate.M, "-")))
+splits <- max(lengths(strsplit(mdt$payrate.M, "-")))
 
 # Spliting the payrate into m.payrate1 and m.payrate2, Ignoring those column with additional splits
-mdt <- inputdt[lengths(strsplit(inputdt$payrate.M, "-"))<=2,
+mdt <- mdt[lengths(strsplit(mdt$payrate.M, "-"))<=2,
                paste0("m.payrate", 1:2) := tstrsplit(payrate.M, "-", fixed=TRUE)][] 
 
 # Changing the column into numerics
@@ -129,8 +219,15 @@ The mean value and median value of the payrate should almost be equivalent given
 #    Mode   FALSE    TRUE    NA's 
 # logical       2    4743   17255 
 
-# listing the data with m.payrate1 > m.payrate2
-mdt[m.payrate1>m.payrate2,list(payrate,payrate.M,m.payrate1,m.payrate2)]
+# listing the data with m.payrate1 > m.payrate2, removing these data
+mdt[m.payrate1>m.payrate2,
+    list(payrate, payrate.M)]
+
+
+mdt[(m.payrate1>m.payrate2),`:=`(payrate.M= NA,
+                                 m.payrate1= NA,
+                                 m.payrate2= NA,
+                                 m.payrate.Mean= NA)]
 ```
 
 In both of these cases, the payrate is not well formated and extracted. There is probably some bad extraction in the extracting of payrate that is not depicted here as well as they may be hidden behind m.payrate2 > m.payrate1.
@@ -139,50 +236,33 @@ Removing these cases (where m.payrate1>m.payrate2) by setting them to NA.
 
 
 ```{r}
-mdt[(m.payrate1>m.payrate2),`:=`(payrate.M= NA,
-                                 m.payrate1= NA,
-                                 m.payrate2= NA,
-                                 m.payrate.Mean= NA)]
-
-
-# The majority of the records has no payrate listed.
-# summary(mdt$m.payrate.Mean)
-#      Min.   1st Qu.    Median      Mean   3rd Qu.      Max.      NA's 
-# 9.000e+00 2.500e+05 3.750e+05 3.672e+09 8.000e+05 1.740e+13     17255 
-# The maximum figure also points to likely error in extracation
-
-# after attempting a few threshold of cut, I find 9e+6 to be most suitable, listed below are a table depicted payrate after this threshold.
+# After attempting a few threshold of cut, I find 9e+6 to be most suitable, listed below are a table depicted payrate after this threshold.
 mdt[m.payrate.Mean>9e+6] %>%
-  .[,list(payrate, m.payrate.Mean)]
+  .[,list(payrate, m.payrate1, m.payrate2)]
 
-```
-
-In fact, it almost seems like the posting of payrate = "Pay Band: PB3 (Rs.15600-39100) with Academic Grade Pay of Rs.8,000/p. m." are just reposting seeing about 80 listing of jobs are having identifical payrate.
-
-```{r}
-# for an easy way out, it seems just removing all extracted payrate data for these badly extracted payrate will do. ie:
+# for an easy way out, I will be removing all extracted payrate data for these badly formated
 mdt[m.payrate.Mean>9e+6,`:=`(payrate.M= NA,
                              m.payrate1= NA,
                              m.payrate2= NA,
                              m.payrate.Mean= NA)]
+```
+
+In fact, it almost seems like the posting of payrate = "Pay Band:  PB4 (Rs.3740067000) with Academic Grade Pay of Rs.8,000/p. m." are just reposting. As there exist a host of rows with such adata.
 
 
+```{r}
 #total count of valid payrate records
 N_valid_payrate<-sum(!is.na(mdt$m.payrate.Mean))
 
 payrate_record_percentage <- sum(!is.na(mdt$m.payrate.Mean))/sum((mdt$m.payrate.Mean), na.rm=T)
 ```
 
-
-
 Sadly, there is only `payrate_record_percentage` of the job listing that has its payrate listed and extracted so fr, that would be a mere `N_valid_payrate` records.
 
-```{r}
-# all_values <- function(x) {
-#   if(is.null(x)) return(NULL)
-#   paste0(names(x), ": ", format(x), collapse = "<br />")
-# }
 
+### Histogram of PayRate
+
+```{r}
 mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<9e+6] %>%
   melt(.,  measure.vars = patterns("^m.payrate")) %>%
   ggvis(~value, fill = ~variable) %>%
@@ -192,8 +272,6 @@ mdt[!is.na(m.payrate.Mean),][m.payrate.Mean<9e+6] %>%
   add_axis("y", title = "Density")
 
 
-
-# Oddly I couldn't find documented (and not dirty) approach in inserting a plot title with ggvis. I will just leave it as it is for now.
 
 ```
 
@@ -219,11 +297,10 @@ Well it seems that for the payrate of the listed jobs, the median of listed sala
 head(mdt$education,5)
 ```
 
-It can be seen ( after skimming through multiple lines)that Education can be split into different field quite accurately with delimiter of  "UG:", "PG:" and "Doctorate:". Also, in some case, the education field can be listed, yet are noted as "Not Required"
+It can be seen ( after skimming through multiple lines)that Education can be split into different field quite accurately with delimiter of  "UG:", "PG:" and "Doctorate:". Also, in some case, the education field can be listed, yet are noted as "Not Required" (such as Doctorate:Doctorate Not Required)
 
 
 ```{r}
-
 mdt %>%
   .[grep("Diploma",education),m.Education.tf.Diploma := TRUE] %>% #Diploma
   .[,m.Education.UG :=trimws(str_extract(education, "(?<=UG: ).*(?=PG:)|(?<=UG: ).*$"))] %>%
@@ -247,16 +324,17 @@ In some case, such as
 mdt[(33:35)]$m.Education.UG
 ```
 
-Additional split on "," will allow more details to be extracted, but I will left this alone for now. Going further would probably require diving deep into NLP or pulling a dictionary (to account for shortforms and synonyms).
+Additional split on "," will allow more details to be extracted(Ie, B.Sc, B.Pharma requirement etc), though I would not venture further on this direction for now.
 
 ### Number of job listing for a particular level of Education
 
 ```{r}
-mdt %>%
-  .[,lapply(.SD, sum, na.rm=TRUE) ,.SDcols= (names(mdt) %like% "^m.Education.tf*")]
+melt(mdt[,lapply(.SD, sum, na.rm=TRUE) ,.SDcols= (names(mdt) %like% "^m.Education.tf*")], measure.vars = patterns("^m.Education.tf*"))
 ```
 
-### Education Factor
+ The Majority of Job posting listed UG(Undergraduate) as Educational requirement. Also, Curiously, there PG(Postgraduate) is listed for many listings too.
+
+### Education Hierarchy Factor
 
 Note that the number of job listing table on top allowed mulitple entries of job for each different ncategories of education. For example, A job that listed education requirement as UG: and PG: would be counted as 1 in both categories. 
 
@@ -268,8 +346,8 @@ The following codes created a section that would only attach the highest recorde
 mdt %>%
   .[grep("Diploma",education),m.Education.factor := "Diploma"] %>% 
   .[!is.na(m.Education.UG),m.Education.factor := "UG"] %>%
-  .[grep("MBA",education),m.Education.factor := "MBA"] %>%
   .[!is.na(m.Education.PG),m.Education.factor := "PG"] %>%
+  .[grep("MBA",education),m.Education.factor := "MBA"] %>%
   .[!is.na(m.Education.DR),m.Education.factor := "DR"]
   
 mdt$m.Education.factor <- factor(mdt$m.Education.factor)
@@ -290,24 +368,48 @@ head(mdt$skills)
 listing of top 10 skill in demand
 
 ```{r}
+
+  ## gglot 
+fill <- "#4271AE"
+lines <- "#1F3552"
+
+
 mdt[!is.na(skills),.N,by=list(skills)] %>%
   .[,.SD[order(-N)]] %>%
-  .[, head(.SD, 10),] %>%
+  .[, head(.SD, 20),] %>%
   .[,value:=fct_inorder(factor(skills))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
-  ggvis(x=~skills, y=~N) %>%
-  layer_bars(fillOpacity := 0.1) %>%
-  add_axis("x", properties = axis_props(
-    labels = list(angle = 45, align = "left", fontSize = 10)
-  ))
+  ggplot() +
+  geom_bar(aes(x = reorder(skills, -N),  y = N), 
+           stat="identity",  
+           colour = lines, fill = fill) +
+        scale_y_continuous(name = "Number of listing") +
+        scale_x_discrete(name = "Skill") +
+        ggtitle("Number of listing for particular skill") +
+        theme_bw() +
+        theme(panel.grid.major = element_line(colour = "#d3d3d3"),
+              panel.grid.minor = element_blank(),
+              panel.border = element_blank(),
+              panel.background = element_blank(),
+              plot.title = element_text(size = 14, face = "bold"),
+              axis.title = element_text(face="bold"),
+              axis.text.x = element_text(colour="black", size = 8, angle = 90,
+                                         hjust = 1,  vjust = 0.5),
+              axis.text.y = element_text(colour="black", size = 9),
+              axis.line = element_line(size=0.5, colour = "black"))
+  
+  # ggvis(x=~skills, y=~N) %>%
+  # layer_bars(fillOpacity := 0.1) %>%
+  # add_axis("x", properties = axis_props(
+  #   labels = list(angle = 45, align = "left", fontSize = 10)
+  # ))
+
+
+ mdt$skills <- as.factor(mdt$skills)
 ```
 
 This shows that the most demanding skills are IT Software - Application Programming, followed by Sales and ITES.
 
 
-
-```{r}
- mdt$skills <- as.factor(mdt$skills)
-```
 
 ## Industry
 ```{r}
@@ -326,70 +428,36 @@ mdt$industry <- as.factor(mdt$industry)
 It seems most job listing are well arranged, it is almost listed in tree like structure that.
 
 ```{r}
-# # splitting the mdt$industry with "/" into industryS1, industryS2 etc
-# splits <- max(lengths(strsplit(mdt$industry, "/")))
-# mdt <- mdt[,paste0("industryS", 1:splits) := tstrsplit(industry, " / ", fixed=TRUE)][]
-# 
-# 
-# mdt[, industry_combined := paste(sort(.SD), collapse = " / "), by = 1:nrow(mdt),
-#    .SDcols = names(mdt) %like% "^industryS"]
-# head(mdt$industry_combined)
-# 
-# mdt[, .N, by= industry_combined] %>%
-#   .[,.SD[order(-N)]]
-
-mdt[, .N, by= industry] %>%
-  .[,.SD[order(-N)]]
-
-
-
-```
-
-### Most Popular industry
-
-```{r}
-## note that this  would also duplicate job listing with multiple industry for certain records, since some of the job listing are listed to have multiple industry 
-# mdt.melt.industry <- melt(mdt,  measure.vars = patterns("^industryS")) 
-# 
-# mdt.melt.industry$value <- trimws(mdt.melt.industry$value)
-# 
-# mdt.melt.industry  %>%
-#   .[!is.na(value),.N,by=list(value)]%>%
-#   .[,.SD[order(-N)]] %>%
-#   .[, head(.SD, 10),] %>%
-#   .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
-#   ggvis(x=~value, y=~N) %>% 
-#   layer_bars(fillOpacity := 0.1)%>%
-#   add_axis("x", title = "Industry",properties = axis_props(
-#     labels = list(angle = 45, align = "left", fontSize = 10)
-#   )) %>%
-#   add_axis("y", title = "Number of posting")
-
 mdt[, .N, by= industry] %>%
   .[,.SD[order(-N)]] %>%
-  .[, head(.SD, 10),] %>%
-  .[,industry:=fct_inorder(factor(industry))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
-  ggvis(x=~industry, y=~N) %>% 
-  layer_bars(fillOpacity := 0.1) %>%
-  add_axis("x", title = "Industry",properties = axis_props(
-    labels = list(angle = 45, align = "left", fontSize = 10)
-  )) %>%
-  add_axis("y", title = "Number of posting")
+  .[,head(.SD, 20)] %>%
+    ggplot() +
+  geom_bar(aes(x = reorder(industry, -N),  y = N), 
+           stat="identity",  
+           colour = lines, fill = fill) +
+        scale_y_continuous(name = "Number of listing") +
+        scale_x_discrete(name = "Skill") +
+        ggtitle("Number of listing for particular skill") +
+        theme_bw() +
+        theme(panel.grid.major = element_line(colour = "#d3d3d3"),
+              panel.grid.minor = element_blank(),
+              panel.border = element_blank(),
+              panel.background = element_blank(),
+              plot.title = element_text(size = 14, face = "bold"),
+              axis.title = element_text(face="bold"),
+              axis.text.x = element_text(colour="black", size = 8, angle = 90,
+                                         hjust = 1,  vjust = 0.5),
+              axis.text.y = element_text(colour="black", size = 9),
+              axis.line = element_line(size=0.5, colour = "black"))
+
+
+
 ```
 
-###Least popular Industry
+
+### Least popular Industry
 
 ```{r}
-# mdt.melt.industry[!is.na(value),.N,by=list(value)]  %>%
-#   .[,.SD[order(-N)]] %>%
-#   .[, tail(.SD, 10),]%>%
-#   .[,value:=fct_inorder(factor(value))] %>% # fct_infreq from "forcats" to reoder the factor in x axis
-#   ggvis(x=~as.factor(value), y=~N) %>%
-#   layer_bars(fillOpacity := 0.1)%>%
-#   add_axis("x", title = "Industry") %>%
-#   add_axis("y", title = "Number of posting")
-
-
 mdt[, .N, by= industry] %>%
   .[,.SD[order(-N)]] %>%
   .[!is.na(industry), tail(.SD, 10),] %>%
@@ -407,6 +475,13 @@ mdt[, .N, by= industry] %>%
 
 
 ## Experience
+
+sample data
+```{r}
+head(mdt$experience)
+```
+
+All processing it require it just the extraction of the numerics values.
 
 ```{r}
 # dt[!str_detect(dt$experience, "yrs")]# It seems all the listing are in a matter of years
@@ -428,7 +503,8 @@ mdt$experience1<-as.numeric(mdt$experience1)
 mdt$experience2<-as.numeric(mdt$experience2)
 
 # Create a columm for median of experience
-mdt[, m.experience.Median:=median(c(experience1, experience2)), by = uniq_id]
+mdt[, m.experience.Median:=floor(median(c(experience1, experience2))), by = uniq_id]
+#floor to make sure the median experience remain a integer ( round down) 
 
 
 # Checking if the values in experience1 are always lower than experience2, 
@@ -451,7 +527,9 @@ mdt[!is.na(m.experience.L),]%>%
 ```
 
 
-### Aggregate/Dice Experience to larger groups
+
+To explore experience variable with other factors, I will aggregate the listed Experience into different groups, in a matter of groups of 3 years. This simply aggregate/dice Experience to larger groups
+
 ```{r}
 mdt<-mdt[, m.experience.Cut := cut(m.experience.Median, 
                                    breaks=c(-Inf, 3*(0:3), 10+4*(0:2), Inf), right=F)]
@@ -461,20 +539,22 @@ mdt[is.na(m.experience.Cut)]$m.experience.Cut <- "Not listed"
 
 
 ## Number of positions
+
 ```{r}
-class(mdt$numberofpositions)
-summary(mdt$numberofpositions)
+# summary(mdt$numberofpositions)
+# Min. 1st Qu.  Median    Mean 3rd Qu.    Max.    NA's 
+#    1.00    2.00    4.00   45.12   10.00 2000.00   17536 
 ```
-Intestingly, there are job posting listed to have 2000 positions available, a quick look at this outlier.
+Intestingly, there are job posting listed to have 2000 positions available, a glimpse at this particular listing is shown below.
 
 ```{r}
 mdt[numberofpositions==2000]
 ```
 
-The majority of the job listing doesn't list a number of the number of positions, I think it is reasonable to assump those without listed number in 'Number of position' as 1. This may not be entirely accurate but it will manipulation with other data in later section.
+The majority of the job listing doesn't list a number of the number of positions, I think it is reasonable to assump those without listed number in 'Number of position' as 1.
 
 ```{r}
-mdt<-mdt%>%
+mdt<-mdt %>%
   .[, m.Npositions:=numberofpositions] %>%
   .[is.na(numberofpositions), m.Npositions:=1]
 
@@ -495,28 +575,28 @@ mdt[, c("postdate_time","postdate_timezone") := tstrsplit(postdate,"+",2)]
 # summary(as.factor(mdt$postdate_timezone))
 # 0000  NA's 
 # 21977    23 
-# it seems timezone is pretty meaningless in the data base too
+# it seems timezone is pretty meaningless
 
-# Removing timezone column
+# Removing timezone column, as timezone data is unnecessary. 
 mdt$postdate_timezone <- NULL
+
 ```
 
-formatting
+Formatting into appropriate time Series input
 
 ```{r}
 mdt$postdate_time <- parse_date_time(mdt$postdate_time, "%Y-%m-%d H:M:S")
 #ignoring timezone for now, shouldn't make any difference too
 
-min(mdt$postdate_time, na.rm =T)
-max(mdt$postdate_time, na.rm =T)
+min_time<-min(mdt$postdate_time, na.rm =T)
+max_time<-max(mdt$postdate_time, na.rm =T)
 ```
+
+The datasets job listing ranged from `min_time` to `max_time`.
 
 ### Number of job posting over time
 
 ```{r}
-
-
-#
 mdt[, m.timeCut := cut(as.POSIXct(postdate_time), breaks="1 month")]
 
 mdt[!is.na(m.timeCut), .N, by=m.timeCut] %>%
@@ -547,11 +627,10 @@ Finally we are at location, I have to admit that the reason I went ahead with gg
 
 ```{r}
 head(mdt$joblocation_address,5)
-
 ```
 
 Some job listing are listed at multiple location, such as 
-"Delhi NCR, Mumbai, Bengaluru, Kochi, Greater Noida, Gurgaon, Hyderabad, Kozhikode, Lucknow". Hence,  a strsplit with arguements for ",", "/", should do the job.
+"Delhi NCR, Mumbai, Bengaluru, Kochi, Greater Noida, Gurgaon, Hyderabad, Kozhikode, Lucknow". Hence,  a strsplit with arguement for "," and "/", should do the job.
 
 
 ### Most Popular Location
@@ -572,7 +651,7 @@ mdt.melt.location <-  melt(mdt,  measure.vars = patterns("^m.locationS"), value.
 # where m.i.location indicates modified and individual extracted location
 
 #removing variable that just indicate the order of the "m.locationSX" in Location
-mdt.melt.location$variable<-  NULL
+mdt.melt.location$variable <-  NULL
 
 
 # Setting  empty strings to NA
@@ -587,166 +666,51 @@ mdt.melt.location  %>%
   .[,.SD[order(-N)]] %>%
   .[, head(.SD, 10),] %>%
   .[,value:=fct_inorder(factor(m.i.location))] %>% # fct_infreq from "forcats" 
-  ggvis(x=~m.i.location, y=~N) %>% 
-  layer_bars(fillOpacity := 0.1) %>%
-  add_axis("x", title = "location",properties = axis_props(
-    labels = list(angle = 45, align = "left", fontSize = 10)
-  )) %>%
-  add_axis("y", title = "Number of posting")
+      ggplot() +
+  geom_bar(aes(x = reorder(m.i.location, -N),  y = N), 
+           stat="identity",  
+           colour = lines, fill = fill) +
+        scale_y_continuous(name = "Number of listing") +
+        scale_x_discrete(name = "location") +
+        ggtitle("Number of listing for particular location") +
+        theme_bw() +
+        theme(panel.grid.major = element_line(colour = "#d3d3d3"),
+              panel.grid.minor = element_blank(),
+              panel.border = element_blank(),
+              panel.background = element_blank(),
+              plot.title = element_text(size = 14, face = "bold"),
+              axis.title = element_text(face="bold"),
+              axis.text.x = element_text(colour="black", size = 8, angle = 90,
+                                         hjust = 1,  vjust = 0.5),
+              axis.text.y = element_text(colour="black", size = 9),
+              axis.line = element_line(size=0.5, colour = "black"))
+  
+  # ggvis(x=~m.i.location, y=~N) %>% 
+  # layer_bars(fillOpacity := 0.1) %>%
+  # add_axis("x", title = "location",properties = axis_props(
+  #   labels = list(angle = 45, align = "left", fontSize = 10)
+  # )) %>%
+  # add_axis("y", title = "Number of posting")
 
 ```
 
-Note that this is not extensive, sinec the job listings could have a slightly varaible in the name and it would be registered as a valid count. Ie, location such as "India-Karnataka-Bangalore"are listed as seperated instance with  "Bangalore". 
+Note that this is not extensive, since the job listings could have a slight variation in the name and it would hence not be registered in a same groups for counting. Ie, location listed as "Bengaluru" are not counted in the same instance as with "Bangalore"(Eventhough they appears to be on almost identical location on map). The current setup should be sufficient in showing the popularity of certain locations here.
 
 Regardless, it seems Bengaluru, Bangolore and Mumbai are among the most popular job location.
 
 
-```{r}
-## In this section, I used geocodes to query google for the lat and lon of respective locations.
-# this will be done only with top 100 locations by their respective popularity 
-# which incidently also only inlcudes location with more than ~10 counts of job listings.
-mdt.melt.location.count.t100 <- mdt.melt.location  %>%
-  .[!is.na(m.i.location),.N,by=list(m.i.location)] %>%
-  .[,.SD[order(-N)]] %>%
-  .[, head(.SD, 100),]
-
-# making a list of file in current working directory
-filelist <- list.files()
-
-# mydat exist, read it , otherwise, geocodes to find lat lon for the locations
-if(any(filelist=="mydat.rds")){
-  #read the created .rds containing the require data
-  mydat <- readRDS("mydat.rds")
-}else{
-  
-  # using geocodes ( part of ggmap package) to find the lat and lon for the top 100 location
-  # perhaps not the cleanest way, some of the location will not be the most accurate.
-  geocodes <- geocode(as.character(mdt.melt.location.count.t100$m.i.location))
-  # might be better to batch feed it to avoid over query limit, 
-  # which is an issue for network with good connection
-  mydat <- data.frame(mdt.melt.location.count.t100[,1:2],geocodes)
-  saveRDS(mydat, "mydat.rds")
-  
-  }
-
-# # The locations that have absurd lon and lat are to be removed
-#  mydat.filtered <- setDT(mydat)[lon>60&lon<90] %>%
-#    .[lat>5&lat<40] 
-   
-# India longitudes and latitude from google 
-india =  c(lon =78.96, lat = 20.59)
-
-# # loading the mapdata
-# india.map = get_map(location = india, zoom = 5)
-# 
-# # plotting with ggmap countour plot
-# ggmap(india.map, extent = "panel", maprange=FALSE)+
-#    geom_density2d(data = mydat.filtered, aes(x = lon, y = lat)) +
-#    scale_fill_gradient(low = "green", high = "red") +
-#    scale_alpha(range = c(0.00, 0.25), guide = FALSE) +
-#    theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))
-```
-
-
-### Highchater: Hcmap
-
-Via join with mapdata
-
-```{r}
-mapdata <- get_data_from_map(download_map_data("countries/in/in-all"))
-# glimpse(mapdata)
-# Observations: 34
-# Variables: 20
-# $ hc-group    <chr> "admin1", "admin1", "admin1", "admin1", "admin1", "admin1", "admin1", "adm...
-# $ hc-middle-x <dbl> 0.65, 0.59, 0.50, 0.56, 0.46, 0.46, 0.51, 0.59, 0.47, 0.56, 0.60, 0.63, 0....
-# $ hc-middle-y <dbl> 0.81, 0.63, 0.74, 0.38, 0.64, 0.51, 0.34, 0.41, 0.60, 0.32, 0.47, 0.55, 0....
-# $ hc-key      <chr> "in-py", "in-ld", "in-wb", "in-or", "in-br", "in-sk", "in-ct", "in-tn", "i...
-# $ hc-a2       <chr> "PY", "LD", "WB", "OR", "BR", "SK", "CT", "TN", "MP", "GU", "GA", "NL", "M...
-# $ labelrank   <chr> "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2",...
-# $ hasc        <chr> "IN.PY", "IN.LD", "IN.WB", "IN.OR", "IN.BR", "IN.SK", "IN.CT", "IN.", "IN....
-# $ alt-name    <chr> "Pondicherry|Puduchcheri|PondichÃ©ry", "Ã\u008dles Laquedives|Laccadive|Mi...
-# $ woe-id      <chr> "20070459", "2345748", "2345761", "2345755", "2345742", "2345762", "200704...
-# $ fips        <chr> "IN22", "IN14", "IN28", "IN21", "IN34", "IN29", "IN37", "IN22", "IN35", "I...
-# $ postal-code <chr> "PY", "LD", "WB", "OR", "BR", "SK", "CT", "TN", "MP", NA, "GA", "NL", "MN"...
-# $ name        <chr> "Puducherry", "Lakshadweep", "West Bengal", "Orissa", "Bihar", "Sikkim", "...
-# $ country     <chr> "India", "India", "India", "India", "India", "India", "India", "India", "I...
-# $ type-en     <chr> "Union Territory", "Union Territory", "State", "State", "State", "State", ...
-# $ region      <chr> "South", "South", "East", "East", "East", "East", "Central", "South", "Cen...
-# $ longitude   <chr> "79.7758", "72.7811", "87.7289", "84.4341", "85.8134", "88.4482", "82.3069...
-# $ woe-name    <chr> "Puducherry", "Lakshadweep", "West Bengal", "Orissa", "Bihar", "Sikkim", "...
-# $ latitude    <chr> "10.9224", "11.2249", "23.0523", "20.625", "25.6853", "27.5709", "21.8044"...
-# $ woe-label   <chr> "Puducherry, IN, India", "Lakshadweep, IN, India", "West Bengal, IN, India...
-# $ type        <chr> "Union Territor", "Union Territor", "State", "State", "State", "State", "S...
- 
-DT1 <- setDT(mydat)[, c("lon", "lat"), with = FALSE] %>%
-  .[lon>60&lon<90] %>%
-  .[lat>5&lat<30] %>%
-  unique(., by = c('lon','lat')) 
-
-DT2 <- setDT(mapdata)[, c("longitude", "latitude", "hc-a2"), with = FALSE] %>%
-  .[, c("longitude","latitude"):=lapply(.SD, as.numeric), .SDcol=c("longitude","latitude")]
-colnames(DT2) <- c("lon","lat", "hca2")
-
-# checking the uniqueness
-# DT1[,.N,c("lon","lat")][N>1L]
-# DT2[,.N,c("longitude","latitude")][N>1L]
-
-# Turns out joining on nearest value based on two column isn't trivial,  
-# I have adapted a fuction from stackoverflow
-# https://stackoverflow.com/questions/28435126/merge-data-table-by-two-nearest-variables?noredirect=1&lq=1
-func = function(u,v)
-{
-    vec = with(DT2, (u-lon)^2 + (v-lat)^2)
-    DT2[which.min(vec),]$hca2
-}
-
-t.join.data <- transform(DT1, 'hc-a2'=apply(DT1, 1, function(u) func(u[[1]], u[[2]]))) %>%
-  .[mydat, on=.(lon,lat)] %>%
-  .[!is.na('hc-a2'), value:=sum(N), by="hc-a2"] %>%
-  unique(., by = c('hc-a2')) %>%
-  .[lon>60&lon<90] %>%
-  .[lat>5&lat<30]
-
-# hcmap("countries/in/in-all", data = t.join.data, value = "value",
-#       joinBy = c("hc-a2", "hc-a2"), name = "Number of job listing",
-#       dataLabels = list(enabled = TRUE, format = '{point.name}'), borderWidth = 1,
-#       tooltip = list(valueDecimals = 0, valuePrefix = "", valueSuffix = "")) 
-```
-Sadly I dont see an easy way to join the mapdata inforamtion together with the job listing information to provide state/region level information. i guess the likes of Mumbai, Bengaluru, Bangalore etc are actually cities name.
-
-I resort to plotting them with the geocoded latitude and longitude with highchart, which depicted similar data to the ggmap in previous section.
-
-```{r}
- # Setting z,color and name parameter for plotting with highcharter 
- highcharter.plot <- setDT(mydat)[lon>60&lon<90] %>%
-   .[lat>5&lat<30]%>%
-   .[,`:=`(
-           name=m.i.location,
-           z=N,
-           color= colorize(N)
-           )] 
- 
-# plotting with highcharter
-hcmap("countries/in/in-all", name = "India") %>% 
-  hc_add_series(data = highcharter.plot, type = "mapbubble",
-                name = "Job listing", maxSize = "35") %>% 
-    hc_title(text = "Locations of Job Posting") %>% 
-  hc_subtitle(text = "only top 100 locations are included, the counts also include duplicates if the job is listed at multiple location") %>%
-  hc_mapNavigation(enabled = TRUE) 
-
-```
-
 ## Job description
 
-Output of jobs description column
+Example output of jobs description column
 
 ```{r}
 head(mdt$jobdescription, 1)
 ```
 
-It seems this column data is not well formated. Some of the useful information such as payrate and indsutry is also already extracted into individual column by pre-crawler. Still, it would be interesting to see if we can indentify additional useful information for job description with some basic NLP processes.
+It seems this is not very well formated. Some of the useful information such as payrate and indsutry is also already extracted into individual column by pre-crawler. Still, it would be interesting to see if we can indentify additional useful information for job description.
 
-It seems every job description begins with  "Job Description Â  Send me Jobs like this". This particular string will be removed before anyany processes.
+It seems every job description begins with  "Job Description Â  Send me Jobs like this". This word structure should be removed before any further comparison
+
 
 
 ```{r}
@@ -770,7 +734,7 @@ require(RColorBrewer)
 ### create Document Feature Matrix 
 dfm.txt <- corpus(mdt$jobdescription, docvars = data.frame(grp = mdt$industry)) %>%
   dfm(., groups = "grp", 
-      stem = T, 
+      # stem = T, 
       remove=stopwords("english"),
       remove_symbols = T,
       remove_punct = T,
@@ -808,9 +772,6 @@ term_frequency<-row_sums(t(dfm.txt))
 ## Sort term_frequency in descending order
 term_frequency<- sort(term_frequency,decreasing = T)
 
-## Plot a barchart of the 10 most common wordsm;'
-barplot(term_frequency[1:10], col = "tan", las = 2)
-
 ## Create word_freqs
 word_freqs <- data.frame(term = names(term_frequency), num = term_frequency)
 
@@ -820,9 +781,13 @@ wordcloud(word_freqs$term, word_freqs$num, max.words = 100,
            random.order=FALSE, colors=brewer.pal(8,"Dark2"), rot.per=.3, scale=c(3,.5))
 ```
 
+Although, given that IT industry constitute the majority of the listing, it is to narrow down to per industry basics to look at the differences and significant.
 
-### Comparison of wordcloud by u=industry
-Note that this only consider the 1st/primary industry of the job records
+
+### Comparison of wordcloud by industry
+
+extracting the list of top 8 industry in terms of their number in the job listing.
+
 ```{r}
 ## Summarizing and identifying the most popular 8th industry 
 popular_industry_count <- mdt %>%
@@ -844,7 +809,11 @@ textplot_wordcloud(dfm_select(dfm.txt, documents=popular_industry_count$industry
                    comparison = T, rot.per = .25, scale=c(2,.55),title.size =1)
 ```
 
+
+
 ### Extracting Specific frequency of strings - Programming Langauges
+
+We can also explore the term specific mention of specific strings that corresponds to programming languages to glimpse their popularity and value in job posting 
 
 ```{r}
 ## Making a dictionary list of common and popular string list of programming languages
@@ -900,40 +869,33 @@ mdt.melt.location <- mdt.melt.location %>%
 
 ### Industry, Payrate, Experience
 
-```{r}
-hcboxplot(x = mdt$m.payrate.Mean, 
-          var = mdt$industry) %>% 
-  hc_chart(type = "column") %>% 
-  hc_title(text = "Plot of Payrate(Mean, PA) vs Industry") 
-```
-
-If we were to ignore the outliers and raw data (which would be heavily influenced by the amount of job listing in that particular industry), it seems that "Iron and Steel", "Pulp and Paper", "IT-Software" and "Strategy/Management consulting Firm" command the best payrate.
-
-Although, one would be mistaken to conclude straight away that that "Pul and Paper" and the likes are the best industry (Pay wise) to work in, as this ignore other factors such as number of job listing/payrate recorded, as well other not specifed requirement.
-
-The table below listed the Median Pay of listing by different industries.
-
-```{r}
-mdt[!is.na(m.payrate.Mean),.(.N, 
-                              Q1=quantile(m.payrate.Mean, 0.25),
-                              PayMed=median(m.payrate.Mean),
-                              Q3=quantile(m.payrate.Mean, 0.75)), by=industry] %>%
-  .[,.SD[order(-PayMed)]] %>%
-  .[, head(.SD, 30),] 
-```
-
-Evidently, "Pulp and Paper" current payrate data is derived from only two job listing, thus it's pay scale is likely heavily skrewed; The abonormally high PayScale might be reserved for c-level employee. 
-Also, we have zero clue with regards of how the data (which is a subset of the actual listing) scale when the full database are considered. Regardless, it is probably safe to assume that the current datasets are a random subset of the actual full datasets. Hence, having more listing of jobs in a particular industry would probably portray a clearer picture with regards to pay.
-
 Thus, if we were to restrict our boxplot to industry with more than 30 listing.
 
 ```{r}
-t.filtered.mdt <- mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]
-  
-  hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
-          var = t.filtered.mdt$industry) %>% 
-  hc_chart(type = "column") %>% 
-  hc_title(text = "Plot of Payrate(Mean, PA) vs Industry") 
+mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry] %>%
+  ggplot(aes(x = reorder(industry, -m.payrate.Mean, median), 
+             y = m.payrate.Mean)) +
+  geom_boxplot(colour = lines, fill = fill,
+               size = 1) +
+  scale_y_continuous(name = "Compensation in USD") +
+  scale_x_discrete(name = "Country") +
+  ggtitle("Boxplot of CompensationUSD by Country") +
+  theme_bw() +
+  theme(panel.grid.major = element_line(colour = "#d3d3d3"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(face="bold"),
+        axis.text.x = element_text(colour="black", size = 8, angle = 90,
+                                   hjust = 1,  vjust = 0.5),
+        axis.text.y = element_text(colour="black", size = 9),
+        axis.line = element_line(size=0.5, colour = "black"))  
+
+# hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
+#         var = t.filtered.mdt$industry) %>% 
+# hc_chart(type = "column") %>% 
+# hc_title(text = "Plot of Payrate(Mean, PA) vs Industry") 
 ```
 
 The clear winners are "IT - Sofreware", "Internet" and "Strategy/Management consulting Firm".
@@ -947,23 +909,14 @@ mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]%>%
                               PayMed=median(m.payrate.Mean),
                               Q3=quantile(m.payrate.Mean, 0.75)), by=industry] %>%
   .[,.SD[order(-PayMed)]] %>%
-  .[, head(.SD, 10),]
+  .[order(-N)]
 ```
 
 
-```{r}
-mdt[!is.na(m.payrate.Mean), if (.N > 30) .SD, by = industry]%>%
-  .[!is.na(m.payrate.Mean), .(.N, 
-                              Q1=quantile(m.payrate.Mean, 0.25),
-                              PayMed=median(m.payrate.Mean),
-                              Q3=quantile(m.payrate.Mean, 0.75)), by=industry] %>%
-  .[,.SD[order(-PayMed)]] %>%
-  .[, tail(.SD, 10),]
-```
+On the end of tail,  some of the industries's pay are pathetic - both the median of the industry and the range ( Q3-Q1) is fairly minute. This probably shows both the starting pay and the latitude/margin to growth in these industry are limited. This is exemplify by industry in "BPO/Call Centre", "Recruitment/Staffing", "Teaching/Training" and "Healthcare". 
 
-On the end of tial,  some of the industries's pay are pathetic - both the median of the industry and the range ( Q3-Q1) is fairly minute. This probably shows both the starting pay and the latitude/margin to growth in these industry are limited. This is exemplify by "BPO/Call Centre", "Recruitment/Staffing", "Teaching/Training" and "Healthcare". 
+All this despite the fact that some of these low paying industries - "Call Centre", "Education", "Hospital" are industries that posted most job listing for the duration of the crawled data. So much for supply and demand.
 
-Also, it is interesting to note that some of the low paying industry - "Call Centre", "Education", "Hospital" are industries that posted most job on the database for the duration of the data subset.
 
 ```{r}
 hcboxplot(x = mdt$m.payrate.Mean, 
@@ -976,6 +929,8 @@ hcboxplot(x = mdt$m.payrate.Mean,
 filtered.IMP <- mdt[!is.na(m.experience.Median) & !is.na(m.payrate.Mean),
     .SD, .SDcols=c("m.experience.Median","m.payrate.Mean")]
 
+glance(lm(m.experience.Median~m.payrate.Mean, filtered.IMP))$adj.r.squared
+
 tempt_ggplot <- filtered.IMP %>%
   ggplot(aes(x=factor(m.experience.Median), y=m.payrate.Mean)) +  
   geom_boxplot() +
@@ -984,31 +939,12 @@ tempt_ggplot <- filtered.IMP %>%
         signif(
           glance(lm(m.experience.Median~m.payrate.Mean, filtered.IMP))$adj.r.squared,
                3)), parse = TRUE)
+
 ggplotly(tempt_ggplot) %>%
   layout(title = 'Payrate vs Experience',
          xaxis = list(title = 'Experience (years)[range]', tickangle = 90),
          yaxis = list(title = 'Annual Payrate'))
 
-```
-
-
-
-```{r}
-## archieve of using ggvis for plotting
-
-# mdt[!is.na(m.payrate.Mean)] %>%
-#   ggvis(~industryS1, ~m.payrate.Mean) %>%
-#   layer_boxplots(fillOpacity := 0.1, width = 0.5) %>% 
-#   add_axis("x", title = "Payrate PA Distribution",
-#            properties = axis_props(labels = list(angle = 90, align = "left", fontSize = 10))) %>%
-#   add_axis("y", title = "IndustryS1")
-
-# mdt[!is.na(m.experience.Median)] %>%
-#   ggvis(~industryS1, ~m.experience.Median) %>%
-#   layer_boxplots(fillOpacity := 0.1, width = 0.5) %>% 
-#   add_axis("x", title = "Payrate PA Distribution",
-#            properties = axis_props(labels = list(angle = 90, align = "left", fontSize = 10))) %>%
-#   add_axis("y", title = "IndustryS1")
 ```
 
 #### Exponentially Wage Growth? 
@@ -1029,6 +965,10 @@ tempt_ggplot <- filtered.IMP %>%
         signif(
           glance(lm(m.experience.Median~log(m.payrate.Mean), filtered.IMP))$adj.r.squared,
                3)), parse = TRUE)
+
+
+lm(m.experience.Median~log(m.payrate.Mean), filtered.IMP)
+
 ggplotly(tempt_ggplot)  %>%
   layout(title = 'log(Payrate) vs Experience',
          xaxis = list(title = 'Experience (years)[range]', tickangle = 90),
@@ -1169,8 +1109,6 @@ Since we have most abundant data for the listing of jobs for "IT - Software / So
 
 #### IT - Software / Software services
 
-
-
 ```{r}
 ## Time of posting
 # fitering for only data with valid payrate data and IT software industry
@@ -1184,6 +1122,258 @@ mdt.melt.location %>%
   ))
 ```
 
+
+
+
+#### Healtcare
+
+```{r}
+## Time of posting
+# fitering for only data with valid payrate data and IT software industry
+mdt %>%
+  .[!is.na(m.payrate.Mean)&industry=="Medical / Healthcare / Hospitals"] %>%
+  .[!is.na(m.timeCut), .N, by=m.timeCut] %>%
+  ggvis(~m.timeCut, ~N) %>%
+  layer_bars(fillOpacity := 0.1) %>%
+  add_axis("x", properties = axis_props(
+    labels = list(angle = 45, align = "left", fontSize = 10)
+  ))
+```
+
+This may yield false information as the trends may be results of data subseting, though, it certainly shows that most of the job listing for healthcare occured around May, March for 2016.
+
+
+
+
+
+Plotting location require external data from geocoding ( pin pointing the locations or joining by location name) and also geojson india map mapping. Hence I am defering them to a later section
+
+
+
+# Location difference
+
+
+```{r}
+## In this section, I used geocodes to query google for the lat and lon of respective locations.
+# this will be done only with top 100 locations by their respective popularity 
+# which incidently also only inlcudes location with more than ~10 counts of job listings.
+mdt.melt.location.count.t100 <- mdt.melt.location  %>%
+  .[!is.na(m.i.location),.N,by=list(m.i.location)] %>%
+  .[,.SD[order(-N)]] %>%
+  .[, head(.SD, 100),]
+```
+
+The results of geocoding for the top 100 cities are inserted into the kernel via output of dput()
+
+```{r echo=FALSE, results='hide',message=FALSE}
+# dput(city2latlon[,lapply(.SD, as.character)])
+city2latlon<- structure(list(m.i.location = c("Bengaluru", "Bangalore", "Mumbai", 
+"Hyderabad", "Delhi", "Chennai", "Secunderabad", "Noida", "Gurgaon", 
+"NCR", "Pune", "Kolkata", "Greater Noida", "Ahmedabad", "Navi Mumbai", 
+"Chandigarh", "Ghaziabad", "Delhi NCR", "Faridabad", "Mumbai Suburbs", 
+"Kochi", "Coimbatore", "Jaipur", "Visakhapatnam", "Cochin", "Ernakulam", 
+"Surat", "Lucknow", "Bengaluru Bangalore", "Vijayawada", "Bhubaneshwar", 
+"Vizag", "Trivandrum", "Vadodara", "Indore", "karnataka", "Mangalore", 
+"mumbai", "Nagpur", "Thane", "maharashtra", "Mysore", "Bhopal", 
+"Guwahati", "Baroda", "Kanpur", "Patna", "Trichy", "Dehradun", 
+"Raipur", "bangalore", "Ludhiana", "Agra", "Nasik", "Ranchi", 
+"Hubli", "Cuttack", "Guntur", "delhi", "Belgaum", "haryana", 
+"Ambala", "Vellore", "Madurai", "Salem", "Varanasi", "India", 
+"Rohtak", "Aurangabad", "Bellary", "Pondicherry", "Other City in Uttar Pradesh", 
+"Nellore", "Karnal", "noida", "Panjim", "Anantapur", "Mohali", 
+"Kozhikode", "Tuticorin", "Tirupati", "Kota", "Tirunelveli", 
+"Meerut", "Kurukshetra", "Panipat", "Cuddalore", "Thrissur", 
+"Ooty", "Haryana Other", "Chennai Bangalore", "Rajahmundry", 
+"Amritsar", "Dubai", "gurgaon", "Warangal", "Kakinada", "UAE", 
+"Rajkot", "Nagercoil"), N = c("9760", "7335", "5959", "4570", 
+"4103", "3369", "2858", "2063", "1909", "1638", "1228", "543", 
+"426", "404", "203", "189", "188", "176", "159", "150", "140", 
+"136", "129", "125", "113", "112", "106", "101", "96", "84", 
+"80", "80", "69", "67", "66", "63", "58", "55", "52", "50", "46", 
+"45", "42", "41", "41", "40", "38", "33", "32", "32", "31", "30", 
+"28", "27", "27", "26", "25", "24", "24", "23", "23", "21", "20", 
+"20", "19", "16", "16", "16", "15", "15", "15", "15", "14", "14", 
+"14", "13", "13", "13", "13", "12", "12", "12", "11", "11", "11", 
+"11", "10", "10", "10", "10", "9", "9", "9", "9", "9", "9", "9", 
+"9", "9", "9"), lon = c("77.5945627", "77.5945627", "72.8776559", 
+"78.486671", "77.1024902", "80.2707184", "78.4982741", "77.3910265", 
+"77.0266383", "121.0222565", "73.8567437", "88.363895", NA, "72.5713621", 
+"73.0296625", "76.7794179", "77.4537578", "77.209031", "77.3177894", 
+"72.8751786", "76.2673041", "76.9558321", NA, "83.2184815", "76.2673041", 
+"76.2998842", "72.8310607", "80.946166", "77.5945627", "80.6480153", 
+"85.8245398", "83.2184815", "76.9366376", "73.1812187", "75.8577258", 
+"75.7138884", "74.8559568", "72.8776559", "79.0881546", "72.9780897", 
+"75.7138884", "76.6393805", "77.412615", "91.7362365", "73.1812187", 
+NA, "85.1375645", "78.7046725", "78.0321918", "81.6296413", NA, 
+"75.8572758", "78.0080745", "73.7898023", "85.309562", "75.1239547", 
+"85.8829895", "80.4365402", "77.1024902", "74.4976741", "76.085601", 
+"76.7766974", "79.1324986", "78.1197754", "-70.8967155", "82.9739144", 
+"78.96288", "76.606611", "75.3433139", "76.9214428", "79.8144722", 
+"81.8306904", "79.986456", "76.9904825", "77.3910265", "73.8278496", 
+"77.6005911", "76.7178726", "75.78041", "78.1348361", "79.4191795", 
+"-103.2264256", "77.7566523", NA, "76.878282", "76.9635023", 
+"79.7680243", "76.2144349", "76.6932438", "76.174513", "80.257028", 
+"81.8040345", "74.8722642", "55.2707828", NA, "79.5940544", "82.2474648", 
+"53.847818", "70.8021599", NA), lat = c("12.9715987", "12.9715987", 
+"19.0759837", "17.385044", "28.7040592", "13.0826802", "17.4399295", 
+"28.5355161", "28.4594965", "14.6090537", "18.5204303", "22.572646", 
+NA, "23.022505", "19.0330488", "30.7333148", "28.6691565", "28.6139485", 
+"28.4089123", "19.1538231", "9.9312328", "11.0168445", NA, "17.6868159", 
+"9.9312328", "9.9816358", "21.1702401", "26.8466937", "12.9715987", 
+"16.5061743", "20.2960587", "17.6868159", "8.5241391", "22.3071588", 
+"22.7195687", "15.3172775", "12.9141417", "19.0759837", "21.1458004", 
+"19.2183307", "19.7514798", "12.2958104", "23.2599333", "26.1445169", 
+"22.3071588", NA, "25.5940947", "10.7904833", "30.3164945", "21.2513844", 
+NA, "30.900965", "27.1766701", "19.9974533", "23.3440997", "15.3647083", 
+"20.462521", "16.3066525", "28.7040592", "15.8496953", "29.0587757", 
+"30.3781788", "12.9165167", "9.9252007", "42.51954", "25.3176452", 
+"20.593684", "28.8955152", "19.8761653", "15.1393932", "11.9138598", 
+"25.4484465", "14.4425987", "29.6856929", "28.5355161", "15.4909301", 
+"14.6818877", "30.7046486", "11.2587531", "8.7641661", "13.6287557", 
+"44.0801454", "8.7139126", NA, "29.9695121", "29.3909464", "11.744699", 
+"10.5276416", "11.4064138", "28.409757", "13.004047", "17.0005383", 
+"31.6339793", "25.2048493", NA, "17.9689008", "16.9890648", "23.424076", 
+"22.3038945", NA)), .Names = c("m.i.location", "N", "lon", "lat"
+), row.names = c(NA, -100L), class = c("data.table", "data.frame"
+))
+
+city2latlon$N<- as.numeric(city2latlon$N)
+city2latlon$lat<- as.numeric(city2latlon$lat)
+city2latlon$lon<- as.numeric(city2latlon$lon)
+```
+
+
+```{r}
+# ### AchieveCodes 
+## # that would save a .rds file for geocoded data, or geocode for lat long if it's the 1st time running
+# ## making a list of file in current working directory
+# filelist <- list.files()
+# 
+# # mydat exist, read it , otherwise, geocodes to find lat lon for the locations
+# if(any(filelist=="mydat.rds") & exists("city2latlon")){
+#   #read the created .rds containing the require data
+#   mydat <- readRDS("mydat.rds")
+# }else{
+#   # using geocodes ( part of ggmap package) to find the lat and lon for the top 100 location
+#   # perhaps not the cleanest way, some of the location will not be the most accurate.
+#   geocodes <- geocode(as.character(mdt.melt.location.count.t100$m.i.location))
+#   # might be better to batch feed it to avoid over query limit,
+#   # which is an issue for network with good connection
+#   city2latlon <- data.frame(mdt.melt.location.count.t100[,1:2],geocodes)
+#   saveRDS(mydat, "mydat.rds")
+# }
+# ###
+
+
+# India longitudes and latitude from google
+india =  c(lon =78.96, lat = 20.59)
+
+# #The locations that have absurd lon and lat are to be removed
+# mydat.filtered <- setDT(mydat)[lon>60&lon<90] %>%
+#   .[lat>5&lat<40]
+
+# # loading the mapdata
+# india.map = get_map(location = india, zoom = 5)
+#
+# # plotting with ggmap countour plot
+# ggmap(india.map, extent = "panel", maprange=FALSE)+
+#    geom_density2d(data = mydat.filtered, aes(x = lon, y = lat)) +
+#    scale_fill_gradient(low = "green", high = "red") +
+#    scale_alpha(range = c(0.00, 0.25), guide = FALSE) +
+#    theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))
+```
+
+
+### Highchater: Hcmap
+
+Via join with mapdata
+
+```{r}
+mapdata <- get_data_from_map(download_map_data("countries/in/in-all"))
+# glimpse(mapdata)
+# Observations: 34
+# Variables: 20
+# $ hc-group    <chr> "admin1", "admin1", "admin1", "admin1", "admin1", "admin1", "admin1", "adm...
+# $ hc-middle-x <dbl> 0.65, 0.59, 0.50, 0.56, 0.46, 0.46, 0.51, 0.59, 0.47, 0.56, 0.60, 0.63, 0....
+# $ hc-middle-y <dbl> 0.81, 0.63, 0.74, 0.38, 0.64, 0.51, 0.34, 0.41, 0.60, 0.32, 0.47, 0.55, 0....
+# $ hc-key      <chr> "in-py", "in-ld", "in-wb", "in-or", "in-br", "in-sk", "in-ct", "in-tn", "i...
+# $ hc-a2       <chr> "PY", "LD", "WB", "OR", "BR", "SK", "CT", "TN", "MP", "GU", "GA", "NL", "M...
+# $ labelrank   <chr> "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2",...
+# $ hasc        <chr> "IN.PY", "IN.LD", "IN.WB", "IN.OR", "IN.BR", "IN.SK", "IN.CT", "IN.", "IN....
+# $ alt-name    <chr> "Pondicherry|Puduchcheri|PondichÃ©ry", "Ã\u008dles Laquedives|Laccadive|Mi...
+# $ woe-id      <chr> "20070459", "2345748", "2345761", "2345755", "2345742", "2345762", "200704...
+# $ fips        <chr> "IN22", "IN14", "IN28", "IN21", "IN34", "IN29", "IN37", "IN22", "IN35", "I...
+# $ postal-code <chr> "PY", "LD", "WB", "OR", "BR", "SK", "CT", "TN", "MP", NA, "GA", "NL", "MN"...
+# $ name        <chr> "Puducherry", "Lakshadweep", "West Bengal", "Orissa", "Bihar", "Sikkim", "...
+# $ country     <chr> "India", "India", "India", "India", "India", "India", "India", "India", "I...
+# $ type-en     <chr> "Union Territory", "Union Territory", "State", "State", "State", "State", ...
+# $ region      <chr> "South", "South", "East", "East", "East", "East", "Central", "South", "Cen...
+# $ longitude   <chr> "79.7758", "72.7811", "87.7289", "84.4341", "85.8134", "88.4482", "82.3069...
+# $ woe-name    <chr> "Puducherry", "Lakshadweep", "West Bengal", "Orissa", "Bihar", "Sikkim", "...
+# $ latitude    <chr> "10.9224", "11.2249", "23.0523", "20.625", "25.6853", "27.5709", "21.8044"...
+# $ woe-label   <chr> "Puducherry, IN, India", "Lakshadweep, IN, India", "West Bengal, IN, India...
+# $ type        <chr> "Union Territor", "Union Territor", "State", "State", "State", "State", "S...
+ 
+DT1 <- setDT(city2latlon)[, c("lon", "lat"), with = FALSE] %>%
+  .[lon>60&lon<90] %>%
+  .[lat>5&lat<30] %>%
+  unique(., by = c('lon','lat')) 
+
+DT2 <- setDT(mapdata)[, c("longitude", "latitude", "hc-a2"), with = FALSE] %>%
+  .[, c("longitude","latitude"):=lapply(.SD, as.numeric), .SDcol=c("longitude","latitude")]
+colnames(DT2) <- c("lon","lat", "hca2")
+
+# checking the uniqueness
+# DT1[,.N,c("lon","lat")][N>1L]
+# DT2[,.N,c("longitude","latitude")][N>1L]
+
+# Turns out joining on nearest value based on two column isn't trivial,  
+# I have adapted a fuction from stackoverflow
+# https://stackoverflow.com/questions/28435126/merge-data-table-by-two-nearest-variables?noredirect=1&lq=1
+func = function(u,v)
+{
+    vec = with(DT2, (u-lon)^2 + (v-lat)^2)
+    DT2[which.min(vec),]$hca2
+}
+
+t.join.data <- transform(DT1, 'hc-a2'=apply(DT1, 1, function(u) func(u[[1]], u[[2]]))) %>%
+  .[city2latlon, on=.(lon,lat)] %>%
+  .[!is.na('hc-a2'), value:=sum(N), by="hc-a2"] %>%
+  unique(., by = c('hc-a2')) %>%
+  .[lon>60&lon<90] %>%
+  .[lat>5&lat<30]
+
+# hcmap("countries/in/in-all", data = t.join.data, value = "value",
+#       joinBy = c("hc-a2", "hc-a2"), name = "Number of job listing",
+#       dataLabels = list(enabled = TRUE, format = '{point.name}'), borderWidth = 1,
+#       tooltip = list(valueDecimals = 0, valuePrefix = "", valueSuffix = "")) 
+```
+Sadly I dont see an easy way to join the mapdata inforamtion together with the job listing information to provide state/region level information. i guess the likes of Mumbai, Bengaluru, Bangalore etc are actually cities name.
+
+I resort to plotting them with the geocoded latitude and longitude with highchart, which depicted similar data to the ggmap in previous section.
+
+```{r warning = F}
+ # Setting z,color and name parameter for plotting with highcharter 
+ highcharter.plot <- setDT(city2latlon)[lon>60&lon<90] %>%
+   .[lat>5&lat<30]%>%
+   .[,`:=`(
+           name=m.i.location,
+           z=N,
+           color= colorize(N)
+           )] 
+ 
+# plotting with highcharter
+hcmap("countries/in/in-all", name = "India") %>% 
+  hc_add_series(data = highcharter.plot, type = "mapbubble",
+                name = "Job listing", maxSize = "35") %>% 
+    hc_title(text = "Locations of Job Posting") %>% 
+  hc_subtitle(text = "only top 100 locations are included, the counts also include duplicates if the job is listed at multiple location") %>%
+  hc_mapNavigation(enabled = TRUE) 
+
+```
+
+
+## IT Location plot
 ```{r}
 # # melting for education , this would create duplicate job posting for difference level of education
 # mdt.melt.location.Education <- melt(mdt.melt.location, 
@@ -1242,57 +1432,8 @@ hc_tooltip(useHTML = TRUE,
 
 ```
 
-##### growth
-```{r}
-# # Fit lm model using 5 x 5-fold CV: model
-# model <- train(
-#   m.payrate.Mean ~ m.experience.Median + EducationLevel, 
-#   mdt.melt.location.Education,
-#   method = "rpart", na.action = na.omit,
-#   trControl = trainControl(
-#     method = "cv", number = 5, verboseIter = TRUE
-#   )
-# )
-# 
-# # Print model to console
-# model
-```
 
-```{r}
-# depiciting only the highest educational level per job listing
-hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
-          var = t.filtered.mdt$m.experience.Cut, 
-          var2 = t.filtered.mdt$m.Education.factor, 
-          outliers = FALSE) %>% 
-  hc_chart(type = "column") %>%
-  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education")%>%
-  hc_tooltip(useHTML = TRUE,
-             headerFormat = "<table>",
-             pointFormat = paste("<tr><th colspan=\"1\">N Job Listing<td>{point.z}</td></th></tr>",
-                                 "<tr><th>Location Name</th><td>{point.name} </td></tr>",
-                                 "<tr><th>Pay Median</th><td>{point.Paymedian} </td></tr>",
-                                 "<tr><th>Pay Q1</th><td>{point.Q1} </td></tr>",
-                                 "<tr><th>Pay Q3</th><td>{point.Q3} </td></tr>"),
-             footerFormat = "</table>")
-```
-
-
-#### Healtcare
-
-```{r}
-## Time of posting
-# fitering for only data with valid payrate data and IT software industry
-mdt %>%
-  .[!is.na(m.payrate.Mean)&industry=="Medical / Healthcare / Hospitals"] %>%
-  .[!is.na(m.timeCut), .N, by=m.timeCut] %>%
-  ggvis(~m.timeCut, ~N) %>%
-  layer_bars(fillOpacity := 0.1) %>%
-  add_axis("x", properties = axis_props(
-    labels = list(angle = 45, align = "left", fontSize = 10)
-  ))
-```
-
-This may yield false information as the trends may be results of data subseting, though, it certainly shows that most of the job listing for healthcare occured around May, March for 2016.
+## Healthcare location plot
 
 ```{r}
 ## Highcharter plot to depict the location of job posting on map
@@ -1329,22 +1470,11 @@ hc_tooltip(useHTML = TRUE,
 
 ```
 
-##### growth
 
-```{r}
-t.filtered.mdt<-mdt %>%
-  .[!is.na(m.payrate.Mean)&industry=="Medical / Healthcare / Hospitals"] 
+##leaflet
 
-hcboxplot(x = t.filtered.mdt$m.payrate.Mean, 
-          var = t.filtered.mdt$m.experience.Cut, 
-          var2 = t.filtered.mdt$m.Education.factor,
-          outliers = FALSE) %>% 
-  hc_chart(type = "column") %>%
-  hc_title(text = "Plot of Payrate(Mean, PA) vs Experience (Yrs) segregated on Education") %>%
-  hc_subtitle(text = "the extra series is allocated for job listing with no clear education requirement")
-```
 
-#### Location difference
+
 ```{r}
 require(leaflet)
 ```
@@ -1384,115 +1514,51 @@ phone.icon <- awesomeIcons(
   library = 'fa'
 )
 
-# join mdt.melt.locaiont ( which duplicates for location ) with geocoded address(mydat)
-combined<- mdt.melt.location[,if(.N>1000).SD, by=industry] %>%
-  .[,if(.N>200).N, by=.(industry, m.i.location)] %>%
+mydat<-setDT(mydat)[lon>60&lon<90] %>%
+   .[lat>5&lat<30]
+
+combined<- mdt.melt.location[,if(.N>300).SD, by=industry] %>%
+  .[,if(.N>50).N, by=.(industry, m.i.location)] %>%
   .[mydat, on="m.i.location"] %>%
-  .[!is.na(industry)] %>%
   .[lon>60&lon<90] %>%
   .[lat>5&lat<30]%>%
   droplevels(.) 
 
-list_industry<-unique(combined$industry)
+combined$industry
 
 
-individual_listing <- mdt.melt.location[, .(industry, m.i.location)] %>%
-  .[industry %in% list_industry] %>%
-  .[,.N, by=c("industry", "m.i.location")]%>%
-  .[mydat, on="m.i.location"] %>%
-  .[!is.na(lon)|!is.na(lat)]%>%
-  .[lon>60&lon<90] %>%
-  .[lat>5&lat<30]%>%
-    droplevels(.)
 
-individual_listing[industry=="IT-Software / Software Services"]
-```
+leaflet(combined) %>% addTiles() %>%
+   addProviderTiles(providers$CartoDB.Positron)%>%
+  addAwesomeMarkers(~lon+0.1, ~lat+0.1, icon=hospital.icon, label=~as.character(V1), 
+                    data =combined[industry=="Medical / Healthcare / Hospitals"]) %>%
+    addAwesomeMarkers(~lon+0.2, ~lat+0.2, icon=software.icons, label=~as.character(V1), 
+                    data =combined[industry=="IT-Software / Software Services"]) %>%
+  addAwesomeMarkers(~lon+0.3, ~lat+0.3, icon=phone.icon, label=~as.character(V1), 
+                    data =combined[industry=="BPO / Call Centre / ITES"])  %>%
+    addAwesomeMarkers(~lon, ~lat, icon=bank.icon, label=~as.character(V1),
+                    data =combined[industry=="Strategy / Management Consulting Firms"]) %>%
+  addAwesomeMarkers(~lon-0.1, ~lat-0.1, icon=recruit.icon, label=~as.character(V1),
+                    data =combined[industry=="Recruitment / Staffing"])
+  
 
-```{r}
-leaflet(individual_listing) %>% addTiles() %>%
+pal <- colorFactor("viridis", domain = unique(combined$industry))
+
+leaflet(combined) %>% addTiles() %>%  
   addProviderTiles(providers$CartoDB.Positron)%>%
-  #overlay groups
-# addAwesomeMarkers(~lon, ~lat, icon=hospital.icon, label=~industry,
-#                   data =individual_listing[industry=="Medical / Healthcare / Hospitals"],
-#                   clusterOptions = T, group ="Healthcare") %>%
-# addAwesomeMarkers(~lon, ~lat, icon=software.icons, label=~as.character(industry),
-#                   data =individual_listing[industry=="IT-Software / Software Services"],
-#                   clusterOptions = T, group = "IT") %>%
-# addAwesomeMarkers(~lon, ~lat, icon=phone.icon, label=~as.character(industry),
-#                   data =individual_listing[industry=="BPO / Call Centre / ITES"],
-#                   clusterOptions = T, group ="Call Centre")  %>%
-# addAwesomeMarkers(~lon, ~lat, icon=bank.icon, label=~as.character(industry),
-#                   data =individual_listing[industry=="Strategy / Management Consulting Firms"],
-#                   clusterOptions = T, group = "Strategy") %>%
-# addAwesomeMarkers(~lon, ~lat, icon=recruit.icon, label=~as.character(industry),
-#                   data =individual_listing[industry=="Recruitment / Staffing"],
-#                   clusterOptions = T, group = "Recruit") %>%
-addCircles(~lon, ~lat, stroke = F, group = "recruit",
-           data =individual_listing[industry=="IT-Software / Software Services"] ) %>%
-  # Layers control
-  addLayersControl(
-    overlayGroups = c("Medical", "IT", "Call Centre", "Strategy", "Recruit"),
-    options = layersControlOptions(collapsed = FALSE)
-  )
-individual_listing[industry=="IT-Software / Software Services"]
-individual_listing[industry=="Medical / Healthcare / Hospitals"]
-unique(individual_listing$industry)
-```
-
-```{r}
-leaflet(individual_listing) %>% addTiles() %>%  
-  addProviderTiles(providers$CartoDB.Positron)%>%
-   #overlay groups
-addCircleMarkers(~lon, ~lat, popup=~industry,
-                  data =individual_listing[industry=="IT-Software / Software Services"],
-                  clusterOptions = T, group ="IT") %>%
-addCircleMarkers(~lon, ~lat, popup=~industry,
-                  data =individual_listing[industry=="Recruitment / Staffing"],
-                  clusterOptions = T, group ="Recruit") %>%
-addCircleMarkers(~lon, ~lat, popup=~industry,
-                  data =individual_listing[industry=="Banking / Financial Services / Broking"],
-                  clusterOptions = T, group ="Bank") %>%
-addCircleMarkers(~lon, ~lat, popup=~industry,
-                  data =individual_listing[industry==list_industry[[4]]],
-                  clusterOptions = T, group ="Internet") %>%
-addCircleMarkers(~lon, ~lat, popup=~industry,
-                  data =individual_listing[industry==list_industry[[5]]],
-                  clusterOptions = T, group ="Pharma") %>%
-  # Layers control
-  addLayersControl(
-    overlayGroups = c("IT", "Recruit", "Bank", "Internet", "Pharma"),
-    options = layersControlOptions(collapsed = FALSE)
-  )
-```
-
-```{r}
-pal <- colorFactor("viridis", domain = unique(individual_listing$industry))
-
-leaflet(individual_listing) %>% addTiles() %>%  
-  addProviderTiles(providers$CartoDB.Positron)%>%
-  addCircleMarkers(lng = ~jitter(lon), lat = ~jitter(lat), weight = 10,
-    # radius = ~V1*10,
+  addCircleMarkers(lng = ~lon, lat = ~lat, weight = 10,
+    radius = ~N*100,
     color = ~pal(industry),
-    stroke = FALSE, fillOpacity = 0.3,
-    popup = ~industry
-    label = paste(LIBGEO , " | " , as.character(counts) , " employees" , sep ="" )
-    # clusterOptions = markerClusterOptions()
-      )%>%
-  addLegend("bottomright", pal = pal, values = ~industry,
-    title = "Industry",
-    opacity = 1
+    stroke = FALSE, fillOpacity = 0.5,
+    clusterOptions = markerClusterOptions()
   )
 
-leaflet(individual_listing) %>% addTiles() %>%  
+leaflet(combined) %>% addTiles() %>%  
   addProviderTiles(providers$CartoDB.Positron)%>%
   addCircles(lng = ~lon, lat = ~lat, weight = 10,
-    radius = ~N*10,
+    radius = ~N*100,
     color = ~pal(industry), 
     popup = ~m.i.location
-  )%>%
-  addLegend("bottomright", pal = pal, values = ~industry,
-    title = "Industry",
-    opacity = 1
   )
 
 
